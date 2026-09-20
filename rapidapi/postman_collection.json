@@ -1,0 +1,139 @@
+{
+  "info": {
+    "_postman_id": "c4b12345-6789-4abc-def0-cancerinfo001",
+    "name": "CancerInfo API (Production v1)",
+    "description": "Postman Collection for CancerInfo API: Free, global, source-transparent cancer knowledge platform with fact-level provenance.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Registry Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "health"]
+        },
+        "description": "Check service health and registry counts."
+      }
+    },
+    {
+      "name": "List Approved Cancers",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/cancers",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "cancers"]
+        }
+      }
+    },
+    {
+      "name": "Get Cancer Detail (Breast Cancer)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/cancers/breast-cancer",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "cancers", "breast-cancer"]
+        }
+      }
+    },
+    {
+      "name": "Get Symptoms with US Provenance",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/cancers/breast-cancer/symptoms?country=US",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "cancers", "breast-cancer", "symptoms"],
+          "query": [
+            { "key": "country", "value": "US" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Screening Guidelines (UK / NHS)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/cancers/colorectal-cancer/screening?country=GB",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "cancers", "colorectal-cancer", "screening"],
+          "query": [
+            { "key": "country", "value": "GB" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search by Abbreviation (CRC)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/search?q=CRC",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "search"],
+          "query": [
+            { "key": "q", "value": "CRC" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Authoritative Source Registry",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/sources",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "sources"]
+        }
+      }
+    },
+    {
+      "name": "Coverage Transparency",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/coverage",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "coverage"]
+        }
+      }
+    }
+  ]
+}

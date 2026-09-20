@@ -1,0 +1,6 @@
+{
+  "name": "CancerInfo API",
+  "description": "A free, structured, global, source-transparent public REST API aggregating normalized cancer knowledge with fact-level provenance from authoritative health organizations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,205 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CancerInfo API",
+    "description": "Free, global, source-transparent cancer knowledge REST API aggregating verified clinical data with fact-level provenance from NCI (US), WHO, NHS (UK), and Cancer Australia. Built with love and dedicated to cancer fighters and families worldwide.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "CancerInfo Open API Initiative",
+      "email": "community@cancerinfo-api.org",
+      "url": "https://github.com/cancerinfo-api/cancerinfo-api"
+    },
+    "license": {
+      "name": "MIT with Public Health Attributions",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "x-rapidapi-category": "Health & Fitness",
+    "x-rapidapi-pricing": "FREE"
+  },
+  "servers": [
+    {
+      "url": "https://cancerinfo-api.onrender.com",
+      "description": "Production Cloud Service"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Development Server"
+    }
+  ],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Health and System Status",
+        "description": "Returns current API health, database connectivity, uptime, and loaded authoritative source metrics.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Successful health check",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "healthy",
+                  "api_name": "CancerInfo API",
+                  "api_version": "1.0.0",
+                  "database": "connected",
+                  "timestamp": "2026-09-12T07:02:17Z",
+                  "uptime_seconds": 1240.5,
+                  "environment": "production",
+                  "source_registry_count": 5,
+                  "approved_cancers_count": 7
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cancers": {
+      "get": {
+        "summary": "List Canonical Cancers",
+        "description": "Retrieve catalog of approved canonical cancers with aliases, anatomy sites, and available category sections.",
+        "operationId": "listCancers",
+        "parameters": [
+          {
+            "name": "site",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Filter by anatomical site (e.g., 'Breast', 'Lung', 'Colon and Rectum')"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 1 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of cancers"
+          }
+        }
+      }
+    },
+    "/v1/cancers/{cancer}": {
+      "get": {
+        "summary": "Get Canonical Cancer Details",
+        "description": "Resolves slug or alias to canonical record with taxonomy codes and available categories.",
+        "operationId": "getCancerBySlug",
+        "parameters": [
+          {
+            "name": "cancer",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Slug, canonical name, or alias (e.g., 'breast-cancer', 'CRC', 'lung-cancer')"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Cancer metadata" },
+          "404": { "description": "Cancer not found" }
+        }
+      }
+    },
+    "/v1/cancers/{cancer}/{category}": {
+      "get": {
+        "summary": "Get Normalized Category Knowledge with Provenance",
+        "description": "Fetches verified medical records for a specific category (symptoms, screening, risk_factors, etc.) with source citations, URLs, jurisdiction, and legal attributions.",
+        "operationId": "getCancerCategoryKnowledge",
+        "parameters": [
+          {
+            "name": "cancer",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Cancer identifier (e.g. 'breast-cancer', 'colorectal-cancer')"
+          },
+          {
+            "name": "category",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Standardized category (e.g. 'symptoms', 'screening', 'risk_factors', 'treatment', 'overview')"
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Jurisdiction filter (e.g., 'US', 'GB', 'AU', 'GLOBAL')"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Normalized category content records with provenance" }
+        }
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "summary": "Search Cancer Knowledge",
+        "description": "Multi-factor full-text and alias search across cancers, clinical acronyms (e.g., CRC, NSCLC), and symptoms.",
+        "operationId": "searchCancerKnowledge",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Search query text or acronym"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Ranked search results" }
+        }
+      }
+    },
+    "/v1/sources": {
+      "get": {
+        "summary": "List Authoritative Sources",
+        "description": "Registry of approved health organizations, trust tier ratings, licenses, and verified domains.",
+        "operationId": "listSources",
+        "responses": {
+          "200": { "description": "List of sources" }
+        }
+      }
+    },
+    "/v1/categories": {
+      "get": {
+        "summary": "List 37 Standard Knowledge Categories",
+        "description": "Canonical classification schema across all cancer knowledge types.",
+        "operationId": "listCategories",
+        "responses": {
+          "200": { "description": "List of categories" }
+        }
+      }
+    },
+    "/v1/coverage": {
+      "get": {
+        "summary": "Global Knowledge Coverage Transparency",
+        "description": "Detailed transparency metrics across covered cancers, sections, jurisdictions, and verified documents.",
+        "operationId": "getCoverage",
+        "responses": {
+          "200": { "description": "Coverage statistics" }
+        }
+      }
+    }
+  }
+}

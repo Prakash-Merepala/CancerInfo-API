@@ -18,27 +18,41 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
 
 ---
 
-## Development Setup
+## Development Setup & Package Management
+
+This repository standardizes on **npm** as its Node.js package manager, using a committed root `package-lock.json` for deterministic, reproducible installations in local development, Docker, and GitHub Actions CI.
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/cancerinfo-api/cancerinfo-api.git
-cd cancerinfo-api
+git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
+cd CancerInfo-API
 
-# 2. Set up Python virtual environment
+# 2. Set up Python virtual environment & dependencies
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
-# 3. Install Node.js dependencies
-npm install
+# 3. Install Node.js dependencies (use npm ci for clean reproducible install)
+npm ci
 
-# 4. Run tests
-python3 -m pytest tests/
+# 4. Run tests & validation suite
+python -m pytest tests/ -v
+npm run lint
+npm run build
 
 # 5. Start dev server
 npm run dev
 ```
+
+### Pre-PR Validation Commands
+
+Before opening a pull request, ensure all CI validation gates pass locally:
+
+1. `npm ci` — Clean installation succeeds without lockfile drift.
+2. `npm run lint` — TypeScript static type checking (`tsc --noEmit`).
+3. `npm run build` — Frontend Vite production build (`dist/index.html`) and backend Node bundle (`dist/server.cjs`).
+4. `python -m pip install -r requirements.txt` — Python dependency installation.
+5. `python -m pytest tests/ -v` — Full backend test suite (all 26 tests passing).
 
 ---
 

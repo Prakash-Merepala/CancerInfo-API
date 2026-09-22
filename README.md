@@ -4,11 +4,11 @@
 ### *A Free, Global, Source-Transparent Cancer Knowledge Platform with Fact-Level Provenance*
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](/rapidapi/rapidapi-openapi.json)
 [![RapidAPI](https://img.shields.io/badge/RapidAPI-100%25_Free-0052CC?style=for-the-badge&logo=rapidapi&logoColor=white)](https://rapidapi.com/hub)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-[![Tests: 26/26 Passing](https://img.shields.io/badge/Tests-26%2F26_Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
+[![Tests: 28/28 Passing](https://img.shields.io/badge/Tests-28%2F28_Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
 
 <p align="center">
@@ -192,27 +192,30 @@ CancerInfo API is 100% ready for publishing on developer portals and marketplace
 
 ## 🛠️ Tech Stack & Architecture
 
-- **Backend**: Python 3.10+, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic, SQLite (dev) / PostgreSQL (prod).
-- **Gateway & Developer Portal**: Express.js + Vite + React 18 + Tailwind CSS.
-- **Auditing & Safety**: Automatic `X-Request-ID` generation, millisecond `X-Response-Time-MS` measurement, in-memory sliding-window rate limiting (`X-RateLimit-*`), and mandatory clinical disclaimer headers.
-- **Automated Testing**: 26 pytest unit and integration tests passing with 100% green coverage.
+- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, SQLite (dev) / PostgreSQL (prod), Uvicorn.
+- **Developer Documentation & Portal**: Built directly into FastAPI: Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), OpenAPI 3.1 spec (`/openapi.json`), and Developer Landing (`/`).
+- **Auditing & Compliance**: Automatic `X-Request-ID` UUID tracking, millisecond `X-Response-Time-MS` measurement, in-memory sliding-window rate limiting (`X-RateLimit-*`), and mandatory clinical disclaimer headers (`X-Medical-Disclaimer`, `X-Disclaimer`).
+- **Automated Testing**: 28 pytest unit and integration tests passing with 100% green coverage.
+- **Companion UI**: The standalone React/Vite Developer Portal is archived at git tag `archive/cancerinfo-explorer-ui` and packaged in `cancerinfo-explorer-ui/` ready for separate deployment.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        CANCERINFO API GATEWAY                          │
+│                        CANCERINFO FASTAPI RUNTIME                      │
 ├────────────────────────────────────────────────────────────────────────┤
 │  Incoming Client (cURL / Python / RapidAPI / Browser / Mobile App)     │
 │                                  │                                     │
-│                        [Express Reverse Proxy]                         │
+│                     [FastAPI ASGI Middleware]                          │
 │         • Request ID Tracking    • Rate Limiting (120 req/min)         │
-│         • Audit Logging          • Safety & Disclaimer Headers         │
+│         • Millisecond Timing     • Safety & Disclaimer Headers         │
+│         • Root Health Probes     • Automatic CORS Handling             │
 │                                  │                                     │
 │                    ┌─────────────┴─────────────┐                       │
 │                    ▼                           ▼                       │
-│         [Python FastAPI Backend]       [Developer Portal]              │
-│         • /v1 REST Endpoints           • Interactive Swagger (/docs)   │
-│         • Full-Text Search Engine      • ReDoc Documentation (/redoc)  │
-│         • Taxonomy Normalizer          • OpenAPI 3.1 Schema Spec       │
+│         [Core /v1 REST API]            [Documentation Engine]          │
+│         • /v1/cancers, /symptoms       • Interactive Swagger (/docs)   │
+│         • /v1/search (Acronyms & text) • ReDoc Documentation (/redoc)  │
+│         • /v1/sources & /v1/coverage   • OpenAPI 3.1 Schema Spec       │
+│         • Jurisdictional Filtering     • Developer Portal (/)          │
 │                    │                                                   │
 │                    ▼                                                   │
 │         [Relational SQLite / Neon PostgreSQL]                          │
@@ -226,19 +229,20 @@ CancerInfo API is 100% ready for publishing on developer portals and marketplace
 
 ## 🧪 Automated Testing
 
-Run the comprehensive 26-test suite:
+Run the comprehensive 28-test suite:
 ```bash
 python3 -m pytest tests/ -v
 ```
 
-All 26 tests cover:
-- Health and database connectivity
+All 28 tests cover:
+- Health and database connectivity (`/v1/health`, `/health`, `/api/health`)
 - Canonical cancer slug resolution and pagination
 - Clinical abbreviation matching (`CRC` -> `colorectal-cancer`)
 - Fact-level provenance schema validation
 - Jurisdictional filtering (`country=US`, `country=GB`)
 - Multi-source citation tracking
 - 37-category taxonomy compliance
+- Audit tracking headers and rate-limiting enforcement
 
 ---
 

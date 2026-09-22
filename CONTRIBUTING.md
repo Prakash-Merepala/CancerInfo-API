@@ -18,9 +18,9 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
 
 ---
 
-## Development Setup & Package Management
+## Development Setup & Workflow
 
-This repository standardizes on **npm** as its Node.js package manager, using a committed root `package-lock.json` for deterministic, reproducible installations in local development, Docker, and GitHub Actions CI.
+This repository standardizes on **Python 3.11+** and **FastAPI** for high performance, automatic OpenAPI documentation, and strict schema validation.
 
 ```bash
 # 1. Clone repository
@@ -30,29 +30,25 @@ cd CancerInfo-API
 # 2. Set up Python virtual environment & dependencies
 python3 -m venv venv
 source venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-# 3. Install Node.js dependencies (use npm ci for clean reproducible install)
-npm ci
-
-# 4. Run tests & validation suite
+# 3. Run the automated test suite
 python -m pytest tests/ -v
-npm run lint
-npm run build
 
-# 5. Start dev server
-npm run dev
+# 4. Start local development server with auto-reload
+uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
 ### Pre-PR Validation Commands
 
 Before opening a pull request, ensure all CI validation gates pass locally:
 
-1. `npm ci` — Clean installation succeeds without lockfile drift.
-2. `npm run lint` — TypeScript static type checking (`tsc --noEmit`).
-3. `npm run build` — Frontend Vite production build (`dist/index.html`) and backend Node bundle (`dist/server.cjs`).
-4. `python -m pip install -r requirements.txt` — Python dependency installation.
-5. `python -m pytest tests/ -v` — Full backend test suite (all 26 tests passing).
+1. `python -m pip install -r requirements.txt` — Python dependencies install cleanly.
+2. `python -m pytest tests/ -v` — All 28 tests pass green.
+3. `python -c "from app.main import app; app.openapi()"` — OpenAPI 3.1 schema generates without error.
+4. `curl -f http://localhost:3000/health` — Local server health check returns 200 OK.
+
 
 ---
 

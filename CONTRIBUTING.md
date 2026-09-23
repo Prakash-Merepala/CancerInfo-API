@@ -10,9 +10,9 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
    - We strictly aggregate from **Tier 1 (Government & Multilateral Public Health Bodies)** and **Tier 2 (Premier Accredited Cancer Centers & Societies)**.
    - We do *not* ingest private sponsored content, unverified forums, or commercial blogs.
 2. **Expand Canonical Cancer Mappings & Aliases**:
-   - Add international colloquial names, abbreviations (e.g. `NSCLC`, `ALL`, `CML`), or ICD-O-3 codes in `app/pipeline/seed_data.py`.
+   - Add international colloquial names, abbreviations (e.g. `NSCLC`, `ALL`, `CML`), or ICD-O-3 codes in `app/ingestion/seed.py`.
 3. **Enhance Taxonomy & Classification**:
-   - Help refine extraction rules across our 37 standardized categories in `app/core/taxonomy.py`.
+   - Help refine extraction rules across our 37 standardized categories in `app/core/constants.py and app/normalization/taxonomy.py`.
 4. **Develop Client SDKs & Community Templates**:
    - Build client libraries in Python, JavaScript/TypeScript, Go, Swift, Rust, or Kotlin.
 
@@ -20,7 +20,7 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
 
 ## Development Setup & Workflow
 
-This repository standardizes on **Python 3.11+** and **FastAPI** for high performance, automatic OpenAPI documentation, and strict schema validation.
+The core service is Python/FastAPI. The image uses Python 3.11, CI uses 3.10 and the September 22 local assessment used 3.12.2. Align the supported runtime during release work; do not assume cross-version validation from one local run.
 
 ```bash
 # 1. Clone repository
@@ -34,7 +34,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 # 3. Run the automated test suite
-python -m pytest tests/ -v
+DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v
 
 # 4. Start local development server with auto-reload
 uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
@@ -45,7 +45,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 Before opening a pull request, ensure all CI validation gates pass locally:
 
 1. `python -m pip install -r requirements.txt` — Python dependencies install cleanly.
-2. `python -m pytest tests/ -v` — All 28 tests pass green.
+2. `DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v` — Run the full existing suite and meaningful regression tests for the changed behavior; do not equate a passing baseline with launch acceptance.
 3. `python -c "from app.main import app; app.openapi()"` — OpenAPI 3.1 schema generates without error.
 4. `curl -f http://localhost:3000/health` — Local server health check returns 200 OK.
 
@@ -58,3 +58,11 @@ Before opening a pull request, ensure all CI validation gates pass locally:
 - Ensure responses pass type validation in Pydantic schemas under `app/schemas/`.
 - Every added medical fact **must** include its primary source URL and organization attribution.
 - Respect our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Scope and review evidence
+
+Create a task-referenced branch from the agreed base. This documentation branch is `docs/CIAPI-001-python-core-launch`, created from main and fast-forwarded to the Python refactor. Keep it open for additional commits; do not merge without the owner’s instruction.
+
+The archived React client is future scope. Core changes must not restore a second dataset or serving implementation. Include requirements, changed files, schema/data impact, exact tests/results and unresolved risks in each handoff. Source review, local tests, CI, image boot, database restore and marketplace acceptance are separate evidence stages.
+
+Startup creates and seeds tables. Use a disposable database for tests and never run seed/ingestion against valuable data without an approved data procedure. Public content must pass exact-document rights and citation review. See [codebase and launch assessment](docs/CODEBASE_ATLAS.md).

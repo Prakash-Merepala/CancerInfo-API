@@ -1,26 +1,34 @@
 <div align="center">
 
 # 🎗️ CancerInfo API
-### *A Free, Global, Source-Transparent Cancer Knowledge Platform with Fact-Level Provenance*
+### *A Python API for structured cancer information with source metadata*
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](/rapidapi/rapidapi-openapi.json)
-[![RapidAPI](https://img.shields.io/badge/RapidAPI-100%25_Free-0052CC?style=for-the-badge&logo=rapidapi&logoColor=white)](https://rapidapi.com/hub)
+[![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](rapidapi/rapidapi-openapi.json)
+[![RapidAPI](https://img.shields.io/badge/RapidAPI-launch_planned-0052CC?style=for-the-badge&logo=rapidapi&logoColor=white)](rapidapi/RAPIDAPI_LISTING_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-[![Tests: 28/28 Passing](https://img.shields.io/badge/Tests-28%2F28_Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
+[![Tests: local baseline](https://img.shields.io/badge/pytest-28_passed_locally-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
+[![Docker](https://img.shields.io/badge/Docker-boot_validation_pending-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
 
 <p align="center">
   <b>Built with code. Powered by love. Serving humanity free of charge.</b><br>
   <i>"Because when someone you love is fighting cancer, finding trustworthy medical knowledge shouldn't be another battle."</i>
 </p>
 
-[Quickstart](#-quickstart-in-30-seconds) • [Why This Exists](#-why-this-exists-the-story-behind-the-code) • [API Reference](#-api-endpoints) • [RapidAPI Guide](rapidapi/RAPIDAPI_LISTING_GUIDE.md) • [Architecture](#-architecture) • [App Ideas](docs/APP_IDEAS_GUIDE.md)
+[Quickstart](#-local-quickstart) • [Why This Exists](#-why-this-exists-the-story-behind-the-code) • [API Reference](#-api-endpoints) • [RapidAPI Guide](rapidapi/RAPIDAPI_LISTING_GUIDE.md) • [Architecture](#-architecture) • [App Ideas](docs/APP_IDEAS_GUIDE.md)
 
 ---
 
 </div>
+
+## Current project status
+
+Reviewed September 22, 2026 against Python refactor `1199f735e3d77b5c1ada35e6451c7a5b4e36d063`. The API product is FastAPI with SQLAlchemy storage. The former Node JSON server is removed. React is archived in `cancerinfo-explorer-ui/` and its ZIP for a possible later demonstration; it is not required to run the API.
+
+**Prelaunch, acceptance open.** The 28 existing tests pass locally on Python 3.12.2 with 425 warnings. This is not a coverage percentage, image test, PostgreSQL test or clinical approval. Isolated probes reproduced restricted-source publication, false ingestion success after every fetch failed, unknown-category fallback and missing safety/request headers on 429. See [validation evidence](docs/VALIDATION_GUIDE.md) and [architecture and launch assessment](docs/CODEBASE_ATLAS.md).
+
+The seed contains 7 cancer entities, 5 with content, 21 records and 5 populated categories out of 37 defined. Source dates and rights labels need review before publication. No deployed URL or RapidAPI acceptance is verified. October 4 remains the launch target; September 27 is the intended submission checkpoint for seven days of lead time. September 28 is the adjustable six-day fallback.
 
 ## 💜 Why This Exists: The Story Behind the Code
 
@@ -44,26 +52,42 @@ I am an engineer. In software, we demand immutability, cryptographic provenance,
 
 I made a silent promise: **I would build the public API I desperately needed on those dark nights.**
 
-**CancerInfo API** is that promise kept:
+**CancerInfo API** is the project built toward that promise. Its goals are:
 - **100% Free Forever**: No paywalls, no monetization gates, no commercial exploitation.
-- **Fact-Level Provenance**: Every symptom, guideline, and treatment record traces directly back to world-leading public health authorities—the **National Cancer Institute (NCI)**, the **World Health Organization (WHO)**, the **National Health Service (NHS UK)**, and **Cancer Australia**.
-- **Structured for Builders**: Clean, normalized JSON with taxonomy resolution, multi-jurisdiction comparisons, and instant search, so developers around the world can build clinical assistants, screening calculators, and AI copilots that **never hallucinate.**
+- **Record-Level Source Transparency**: Preserve the exact document, organization, jurisdiction and attribution behind each published record. The current model stores these links, but review and publication enforcement remain launch requirements. Registry entries include NCI, WHO, NHS, Cancer Australia and CDC; registration does not certify rights or supported ingestion.
+- **Structured for Builders**: JSON retrieval, taxonomy resolution, country filtering and heuristic text search for informational integrations. The service does not calculate screening eligibility, provide treatment advice or guarantee that a downstream AI system avoids hallucinations.
 
 *To my mom and dad: This code is dedicated to your courage, your grace, and every family still fighting.* 🕊️
 
 ---
 
-## ⚡ Quickstart in 30 Seconds
+## ⚡ Local quickstart
+
+### Set up the Python service
+
+Use a virtual environment and a separate local database. Startup creates tables and seeds demonstration content. No Node installation is needed. CI selects Python 3.10, the image selects 3.11 and this assessment used 3.12.2; align and validate the supported version before release.
+
+```bash
+git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
+cd CancerInfo-API
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export DATABASE_URL=sqlite:////tmp/cancerinfo-local.db
+python -m uvicorn app.main:app --host 127.0.0.1 --port 3000
+```
+
+Check out the reviewed Python branch before running these commands if the repository default differs. The root `.env.example` still contains legacy Gemini/app-hosting comments; those do not establish an LLM dependency. Set a real admin secret before exposing any administrative endpoint.
 
 ### 1. Test via cURL
 ```bash
 # Health check
 curl -s http://localhost:3000/v1/health
 
-# Breast cancer symptoms with fact-level US NCI provenance
+# Inspect seeded symptoms and source metadata; not clinical approval
 curl -s "http://localhost:3000/v1/cancers/breast-cancer/symptoms?country=US" | jq .
 
-# Colorectal cancer screening guidelines from the UK National Health Service
+# Inspect available seeded screening content and each record jurisdiction
 curl -s "http://localhost:3000/v1/cancers/colorectal-cancer/screening?country=GB" | jq .
 
 # Search acronyms (CRC -> Colorectal Cancer)
@@ -74,33 +98,36 @@ curl -s "http://localhost:3000/v1/search?q=CRC" | jq .
 ```python
 import requests
 
-# Fetch verified symptoms with direct citations
-res = requests.get(
+# Fetch available records and inspect their source metadata
+response = requests.get(
     "http://localhost:3000/v1/cancers/breast-cancer/symptoms",
-    params={"country": "US"}
-).json()
-
-record = res["data"]["records"][0]
-print(f"Content: {record['content']}")
-print(f"Verified Source: {record['sources'][0]['organization']}")
-print(f"Source URL: {record['sources'][0]['url']}")
+    params={"country": "US"}, timeout=20
+)
+response.raise_for_status()
+for record in response.json()["data"]["records"]:
+    print(record["content"])
+    for citation in record["sources"]:
+        print(citation["organization"], citation["url"])
 ```
 
 ### 3. JavaScript / TypeScript
 ```typescript
 const res = await fetch("http://localhost:3000/v1/cancers/colorectal-cancer/screening?country=GB");
+if (!res.ok) throw new Error(`API request failed: ${res.status}`);
 const { data } = await res.json();
-console.log(`Guidelines from ${data.records[0].sources[0].organization}:`);
-console.log(data.records[0].content);
+for (const record of data.records) {
+  console.log(record.content, record.jurisdiction);
+  for (const citation of record.sources) console.log(citation.organization, citation.url);
+}
 ```
 
-### 4. 1-Command Local Launch via Docker Compose
+### 4. Container development path, verification pending
 ```bash
-git clone https://github.com/cancerinfo-api/cancerinfo-api.git
-cd cancerinfo-api
+git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
+cd CancerInfo-API
 docker compose up -d
 ```
-Visit `http://localhost:3000/docs` to open the interactive Swagger UI.
+Visit `http://localhost:3000/docs` after the service starts. Docker build/boot was not run in this review. The current command hardcodes port 3000, and the compose volume does not cover the configured SQLite file. Correct persistence and verify restart/restore before production use.
 
 ---
 
@@ -130,28 +157,22 @@ Visit `http://localhost:3000/docs` to open the interactive Swagger UI.
                                                        └───────────────────────┘
 ```
 
-Every record returned by CancerInfo API adheres to the **Zero Guesswork Guarantee**:
+The following is an illustrative response fragment, not a clinical example or a guarantee. The current implementation does not yet enforce every publication requirement. Unknown publisher dates should remain null rather than be inferred from retrieval time:
 ```json
 {
-  "category": "screening",
-  "content": "The NHS bowel cancer screening program checks if you could have bowel cancer. Everyone aged 50 to 74 is automatically sent a home testing kit (FIT kit) every 2 years.",
-  "jurisdiction": {
-    "scope": "COUNTRY",
-    "country": "GB"
-  },
-  "sources": [
-    {
-      "source_id": "nhs-uk",
-      "organization": "National Health Service (UK)",
-      "trust_tier": "Tier 1 - Primary Authoritative",
-      "url": "https://www.nhs.uk/conditions/bowel-cancer/screening/",
-      "attribution_text": "Contains public sector information licensed under the Open Government Licence v3.0.",
-      "retrieved_at": "2026-09-12T06:23:36Z",
-      "last_verified_at": "2026-09-12T06:23:36Z"
-    }
-  ]
+  "category": "overview",
+  "content": "Illustrative content omitted; use a reviewed source record.",
+  "jurisdiction": {"scope": "COUNTRY", "country": "US"},
+  "sources": [{
+    "source_id": "nci-us",
+    "organization": "National Cancer Institute",
+    "url": "https://www.cancer.gov/",
+    "source_updated_at": null
+  }]
 }
 ```
+
+This fragment is abbreviated. The homepage above is illustrative, not an acceptable exact-document citation for a published record. See the runtime schema and the provenance requirements in the architecture assessment.
 
 ---
 
@@ -163,15 +184,15 @@ Every record returned by CancerInfo API adheres to the **Zero Guesswork Guarante
 | `GET` | `/v1/cancers` | List all canonical cancers with pagination and anatomical site filter |
 | `GET` | `/v1/cancers/{cancer}` | Detail view: canonical name, ICD codes, aliases, and available sections |
 | `GET` | `/v1/cancers/{cancer}/sections` | Summary of populated categories, record counts, and jurisdictions |
-| `GET` | `/v1/cancers/{cancer}/sources` | Active authoritative sources backing this cancer |
-| `GET` | `/v1/cancers/{cancer}/versions` | Historical audit trail and version changelog for clinical records |
+| `GET` | `/v1/cancers/{cancer}/sources` | Sources linked to active records; source-rights gating remains open |
+| `GET` | `/v1/cancers/{cancer}/versions` | Stored version entries; uniqueness and historical provenance need repair |
 | `GET` | `/v1/cancers/{cancer}/{category}` | **Core Knowledge**: Normalized facts with citation URLs and country filters |
 | `GET` | `/v1/search` | Multi-factor search resolving abbreviations (`CRC`), aliases, and symptoms |
-| `GET` | `/v1/sources` | Complete registry of approved sources, trust tiers, and open licenses |
+| `GET` | `/v1/sources` | Seeded registry metadata; permission labels require document review |
 | `GET` | `/v1/sources/{id}` | Detailed profile for an individual health authority |
 | `GET` | `/v1/categories` | Catalog of all 37 standardized cancer knowledge categories |
 | `GET` | `/v1/countries` | Global jurisdictions represented across the knowledge base |
-| `GET` | `/v1/coverage` | Full transparency coverage metrics |
+| `GET` | `/v1/coverage` | Stored active-record coverage counts; not clinical or rights approval |
 | `GET` | `/docs` | Interactive Swagger UI console |
 | `GET` | `/redoc` | High-readability ReDoc API documentation |
 | `GET` | `/openapi.json` | OpenAPI 3.1 schema specification |
@@ -180,23 +201,25 @@ Every record returned by CancerInfo API adheres to the **Zero Guesswork Guarante
 
 ## 🌐 Publish & Deploy Free to the Community
 
-CancerInfo API is 100% ready for publishing on developer portals and marketplaces:
+Publication is planned and remains conditional on the acceptance gates:
 
-- **[RapidAPI Publishing Guide](rapidapi/RAPIDAPI_LISTING_GUIDE.md)**: Ready-to-import `rapidapi/rapidapi-openapi.json` and `rapidapi/postman_collection.json` with instructions to list under the 100% Free Tier.
-- **[Free Cloud Hosting Guide](docs/FREE_HOSTING_DEPLOYMENT.md)**: Deploy for $0/month on Render, Google Cloud Run (2M free calls/month), Railway, or Fly.io.
+- **[RapidAPI Publishing Guide](rapidapi/RAPIDAPI_LISTING_GUIDE.md)**: The static specification has 8 paths while FastAPI generates 15 including admin routes. Generate and test a public-only export before import; verify the collection separately.
+- **[Free Cloud Hosting Guide](docs/FREE_HOSTING_DEPLOYMENT.md)**: Deployment checklist and provider decision notes. Hosting cost, persistence and capacity require verification for the chosen service.
 - **[Validation & Testing Guide](docs/VALIDATION_GUIDE.md)**: Quality assurance runbook for CI/CD and production verification.
-- **[App Ideas & Ecosystem Recipes](docs/APP_IDEAS_GUIDE.md)**: Blueprints for building RAG Chatbots, Screening Calculators, and Symptom Navigators.
-- **[GitHub Open API Ecosystem Stats](docs/GITHUB_ECOSYSTEM_STATS.md)**: Industry adoption benchmarks, developer demographics, and usage patterns.
+- **[App Ideas & Ecosystem Recipes](docs/APP_IDEAS_GUIDE.md)**: Future integration concepts with explicit data and safety prerequisites; they are not current API capabilities.
+- **[GitHub Open API Ecosystem Stats](docs/GITHUB_ECOSYSTEM_STATS.md)**: Project discovery checklist and evidence requirements; no verified project adoption statistics are available.
 
 ---
 
+<a id="-architecture"></a>
+
 ## 🛠️ Tech Stack & Architecture
 
-- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, SQLite (dev) / PostgreSQL (prod), Uvicorn.
+- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, SQLite default / PostgreSQL configurable but deployment unverified, Uvicorn.
 - **Developer Documentation & Portal**: Built directly into FastAPI: Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), OpenAPI 3.1 spec (`/openapi.json`), and Developer Landing (`/`).
-- **Auditing & Compliance**: Automatic `X-Request-ID` UUID tracking, millisecond `X-Response-Time-MS` measurement, in-memory sliding-window rate limiting (`X-RateLimit-*`), and mandatory clinical disclaimer headers (`X-Medical-Disclaimer`, `X-Disclaimer`).
-- **Automated Testing**: 28 pytest unit and integration tests passing with 100% green coverage.
-- **Companion UI**: The standalone React/Vite Developer Portal is archived at git tag `archive/cancerinfo-explorer-ui` and packaged in `cancerinfo-explorer-ui/` ready for separate deployment.
+- **Request handling**: Request ID, timing and disclaimer headers on the normal middleware path; process-local rate limiting. The early 429 response omits several normal headers, and proxy trust requires hardening.
+- **Automated Testing**: 28 existing pytest tests passed locally with 425 warnings. No coverage percentage or production acceptance is claimed.
+- **Companion UI**: Archived in `cancerinfo-explorer-ui/` and `cancerinfo-explorer-ui.zip`. A runnable standalone build and the previously mentioned archive tag are not verified. Missing service imports require follow-up before revival.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -227,22 +250,24 @@ CancerInfo API is 100% ready for publishing on developer portals and marketplace
 
 ---
 
+<a id="automated-testing"></a>
+
 ## 🧪 Automated Testing
 
-Run the comprehensive 28-test suite:
+Run the existing regression suite against an isolated database:
 ```bash
-python3 -m pytest tests/ -v
+DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python3 -m pytest tests/ -v
 ```
 
-All 28 tests cover:
+The suite samples the following areas; it does not prove exhaustive coverage:
 - Health and database connectivity (`/v1/health`, `/health`, `/api/health`)
 - Canonical cancer slug resolution and pagination
 - Clinical abbreviation matching (`CRC` -> `colorectal-cancer`)
 - Fact-level provenance schema validation
 - Jurisdictional filtering (`country=US`, `country=GB`)
-- Multi-source citation tracking
-- 37-category taxonomy compliance
-- Audit tracking headers and rate-limiting enforcement
+- Citation fields on seeded responses; multi-source update correctness remains open
+- The 37-category catalog and selected normalization rules
+- Normal success-response headers; error-path/header and robust limiter acceptance remain open
 
 ---
 

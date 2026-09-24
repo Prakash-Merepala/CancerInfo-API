@@ -10,17 +10,17 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
    - We strictly aggregate from **Tier 1 (Government & Multilateral Public Health Bodies)** and **Tier 2 (Premier Accredited Cancer Centers & Societies)**.
    - We do *not* ingest private sponsored content, unverified forums, or commercial blogs.
 2. **Expand Canonical Cancer Mappings & Aliases**:
-   - Add international colloquial names, abbreviations (e.g. `NSCLC`, `ALL`, `CML`), or ICD-O-3 codes in `app/pipeline/seed_data.py`.
+   - Add international colloquial names, abbreviations (e.g. `NSCLC`, `ALL`, `CML`), or ICD-O-3 codes in `app/ingestion/seed.py`.
 3. **Enhance Taxonomy & Classification**:
-   - Help refine extraction rules across our 37 standardized categories in `app/core/taxonomy.py`.
+   - Help refine extraction rules across our 37 standardized categories in `app/core/constants.py and app/normalization/taxonomy.py`.
 4. **Develop Client SDKs & Community Templates**:
    - Build client libraries in Python, JavaScript/TypeScript, Go, Swift, Rust, or Kotlin.
 
 ---
 
-## Development Setup & Package Management
+## Development Setup & Workflow
 
-This repository standardizes on **npm** as its Node.js package manager, using a committed root `package-lock.json` for deterministic, reproducible installations in local development, Docker, and GitHub Actions CI.
+The core service is Python/FastAPI. The image uses Python 3.11, CI uses 3.10 and the September 22 local assessment used 3.12.2. Align the supported runtime during release work; do not assume cross-version validation from one local run.
 
 ```bash
 # 1. Clone repository
@@ -30,29 +30,25 @@ cd CancerInfo-API
 # 2. Set up Python virtual environment & dependencies
 python3 -m venv venv
 source venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-# 3. Install Node.js dependencies (use npm ci for clean reproducible install)
-npm ci
+# 3. Run the automated test suite
+DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v
 
-# 4. Run tests & validation suite
-python -m pytest tests/ -v
-npm run lint
-npm run build
-
-# 5. Start dev server
-npm run dev
+# 4. Start local development server with auto-reload
+uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
 ### Pre-PR Validation Commands
 
 Before opening a pull request, ensure all CI validation gates pass locally:
 
-1. `npm ci` — Clean installation succeeds without lockfile drift.
-2. `npm run lint` — TypeScript static type checking (`tsc --noEmit`).
-3. `npm run build` — Frontend Vite production build (`dist/index.html`) and backend Node bundle (`dist/server.cjs`).
-4. `python -m pip install -r requirements.txt` — Python dependency installation.
-5. `python -m pytest tests/ -v` — Full backend test suite (all 26 tests passing).
+1. `python -m pip install -r requirements.txt` — Python dependencies install cleanly.
+2. `DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v` — Run the full existing suite and meaningful regression tests for the changed behavior; do not equate a passing baseline with launch acceptance.
+3. `python -c "from app.main import app; app.openapi()"` — OpenAPI 3.1 schema generates without error.
+4. `curl -f http://localhost:3000/health` — Local server health check returns 200 OK.
+
 
 ---
 
@@ -62,3 +58,11 @@ Before opening a pull request, ensure all CI validation gates pass locally:
 - Ensure responses pass type validation in Pydantic schemas under `app/schemas/`.
 - Every added medical fact **must** include its primary source URL and organization attribution.
 - Respect our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Scope and review evidence
+
+Create a task-referenced branch from the agreed base. This documentation branch is `docs/CIAPI-001-python-core-launch`, created from main and fast-forwarded to the Python refactor. Keep it open for additional commits; do not merge without the owner’s instruction.
+
+The archived React client is future scope. Core changes must not restore a second dataset or serving implementation. Include requirements, changed files, schema/data impact, exact tests/results and unresolved risks in each handoff. Source review, local tests, CI, image boot, database restore and marketplace acceptance are separate evidence stages.
+
+Startup creates and seeds tables. Use a disposable database for tests and never run seed/ingestion against valuable data without an approved data procedure. Public content must pass exact-document rights and citation review. See [codebase and launch assessment](docs/CODEBASE_ATLAS.md).

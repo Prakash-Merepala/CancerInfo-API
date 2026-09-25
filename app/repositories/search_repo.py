@@ -5,7 +5,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 from app.core.constants import CANONICAL_CATEGORIES, CATEGORY_ALIASES
-from app.models import Cancer, CancerAlias, ContentRecord, ContentSource, Source
+from app.models import (
+    Cancer,
+    CancerAlias,
+    ConsensusFact,
+    ConsensusFactSource,
+    ContentRecord,
+    ContentSource,
+    Source,
+)
 
 
 class SearchRepository:
@@ -87,12 +95,75 @@ class SearchRepository:
                 "matched_terms": [t for t in tokens if t in c.canonical_name.lower() or any(t in a.alias.lower() for a in c.aliases)],
             })
 
-        # 3. Content record search
+        # 3. Consensus Fact search (e.g. "cough with blood", "lump", "dimpling", "jaundice")
+        consensus_query = (
+            self.db.query(ConsensusFact)
+            .options(
+                joinedload(ConsensusFact.cancer).joinedload(Cancer.aliases),
+                joinedload(ConsensusFact.corroborating_sources).joinedload(ConsensusFactSource.source),
+            )
+            .filter(ConsensusFact.active == True)
+        )
+
+        if detected_category:
+            consensus_query = consensus_query.filter(ConsensusFact.category == detected_category)
+
+        cf_matches = []
+        # Check full query match
+        full_matches = consensus_query.filter(
+            or_(
+                func.lower(ConsensusFact.title).contains(query_clean.lower()),
+                func.lower(ConsensusFact.clinical_detail).contains(query_clean.lower()),
+            )
+        ).all()
+        for cf in full_matches:
+            cf_matches.append((cf, 3.8))
+
+        # Check token matches
+        stop_words = {"with", "and", "the", "for", "from", "in", "of", "to", "a", "an"}
+        meaningful_tokens = [t for t in tokens if len(t) > 2 and t not in stop_words]
+        if meaningful_tokens:
+            token_conditions = [
+                or_(
+                    func.lower(ConsensusFact.title).contains(t),
+                    func.lower(ConsensusFact.clinical_detail).contains(t),
+                )
+                for t in meaningful_tokens
+            ]
+            token_results = consensus_query.filter(or_(*token_conditions)).all()
+            for cf in token_results:
+                if not any(existing[0].id == cf.id for existing in cf_matches):
+                    matched_count = sum(
+                        1
+                        for t in meaningful_tokens
+                        if t in cf.title.lower() or (cf.clinical_detail and t in cf.clinical_detail.lower())
+                    )
+                    score = 2.0 + (matched_count * 0.5)
+                    cf_matches.append((cf, score))
+
+        for cf, score in cf_matches:
+            matched_terms = [
+                t
+                for t in tokens
+                if t in cf.title.lower() or (cf.clinical_detail and t in cf.clinical_detail.lower())
+            ]
+            results.append({
+                "match_type": "consensus_item",
+                "score": score,
+                "cancer": cf.cancer,
+                "category": cf.category,
+                "snippet": f"{cf.title}: {cf.clinical_detail or ''}".strip(),
+                "consensus_item": cf,
+                "record": None,
+                "matched_terms": matched_terms,
+            })
+
+        # 4. Content record search
         content_query = (
             self.db.query(ContentRecord)
             .options(
                 joinedload(ContentRecord.cancer),
-                joinedload(ContentRecord.sources).joinedload(ContentSource.source)
+                joinedload(ContentRecord.sources).joinedload(ContentSource.source),
             )
             .filter(ContentRecord.active == True)
         )
@@ -132,6 +203,7 @@ class SearchRepository:
                 "cancer": rec.cancer,
                 "category": rec.category,
                 "snippet": snippet,
+                "consensus_item": None,
                 "record": rec,
                 "matched_terms": [t for t in tokens if t in rec.content.lower()],
             })

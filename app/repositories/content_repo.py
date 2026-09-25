@@ -4,12 +4,46 @@ Content Record and Provenance Repository
 from typing import List, Optional, Tuple
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload
-from app.models import ContentRecord, ContentSource, ContentVersion, Source
+from app.models import (
+    ConsensusFact,
+    ConsensusFactSource,
+    ContentRecord,
+    ContentSource,
+    ContentVersion,
+    Source,
+)
 
 
 class ContentRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def get_consensus_facts(
+        self,
+        cancer_id: str,
+        category: str,
+    ) -> List[ConsensusFact]:
+        """
+        Retrieve pre-computed atomic consensus items for a cancer and category,
+        with multi-source corroboration links eagerly loaded.
+        """
+        return (
+            self.db.query(ConsensusFact)
+            .filter(
+                ConsensusFact.cancer_id == cancer_id,
+                ConsensusFact.category == category,
+                ConsensusFact.active == True,
+            )
+            .options(
+                joinedload(ConsensusFact.corroborating_sources).joinedload(ConsensusFactSource.source)
+            )
+            .order_by(
+                ConsensusFact.display_order.asc(),
+                ConsensusFact.corroboration_count.desc(),
+            )
+            .all()
+        )
+
 
     def get_records(
         self,

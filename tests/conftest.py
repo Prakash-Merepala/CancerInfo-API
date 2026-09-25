@@ -7,9 +7,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.core.config import settings
+from app.core.security import rate_limiter
 from app.database.session import Base, get_db
 from app.ingestion.seed import seed_database
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    rate_limiter.clients.clear()
+    yield
+    rate_limiter.clients.clear()
+
 
 # In-memory SQLite for fast, isolated tests
 TEST_DATABASE_URL = "sqlite:///:memory:"

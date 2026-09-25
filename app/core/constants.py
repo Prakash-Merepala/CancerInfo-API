@@ -136,38 +136,61 @@ CATEGORY_ALIASES: Dict[str, str] = {
     "stats": "statistics",
     "genes": "genetics",
 }
-BIOLOGICAL_CATEGORIES = frozenset(
-    {
-        "causes",
-        "risk_factors",
-        "biomarkers",
-        "genetics",
-        "symptoms",
-        "signs",
-        "diagnosis",
-        "diagnostic_tests",
-        "grading",
-        "staging",
-        "prognosis",
-        "survival",
-        "recurrence",
-    }
-)
+# Classification of Canonical Categories: Biological (Universal) vs Jurisdictional (Policy-Dependent)
+BIOLOGICAL_CATEGORIES: set = {
+    "symptoms",
+    "signs",
+    "causes",
+    "risk_factors",
+    "prevention",
+    "early_detection",
+    "diagnosis",
+    "diagnostic_tests",
+    "grading",
+    "staging",
+    "biomarkers",
+    "genetics",
+    "types_and_subtypes",
+    "treatment",
+    "surgery",
+    "chemotherapy",
+    "radiation_therapy",
+    "immunotherapy",
+    "targeted_therapy",
+    "hormone_therapy",
+    "stem_cell_transplant",
+    "supportive_care",
+    "side_effects",
+    "recurrence",
+    "palliative_care",
+}
+
+JURISDICTIONAL_CATEGORIES: set = {
+    "screening",
+    "statistics",
+    "follow_up",
+    "living_with_cancer",
+    "caregiver_information",
+    "childhood_cancer",
+    "research",
+    "clinical_trials",
+    "terminology",
+    "overview",
+    "prognosis",
+    "survival",
+}
+
+
+def is_biological_category(category: str) -> bool:
+    """Return True if category represents universal biological clinical presentation."""
+    cat_clean = category.lower().replace("-", "_")
+    return cat_clean in BIOLOGICAL_CATEGORIES
 
 
 def get_category_nature(category: str) -> str:
-    """
-    Return the semantic nature of a canonical content category.
+    """Return 'biological' or 'jurisdictional' depending on category type."""
+    return "biological" if is_biological_category(category) else "jurisdictional"
 
-    Biological categories describe disease presentation, mechanisms, or
-    clinical characteristics. All other categories are treated as general
-    informational content.
-    """
-    return (
-        "biological"
-        if category in BIOLOGICAL_CATEGORIES
-        else "informational"
-    )
 # Standard Country metadata
 COUNTRIES: Dict[str, Dict[str, str]] = {
     "US": {"code": "US", "name": "United States", "region": "Americas", "default_language": "en"},

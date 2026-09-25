@@ -1,7 +1,8 @@
 <div align="center">
 
 # 🎗️ CancerInfo API
-### *A Python API for structured cancer information with source metadata*
+
+### _A Python API for structured cancer information with source metadata_
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
@@ -32,32 +33,34 @@ The seed contains 7 cancer entities, 5 with content, 21 records and 5 populated 
 
 ## 💜 Why This Exists: The Story Behind the Code
 
-> *"Code cannot cure cancer. But code can destroy the fog of misinformation, dismantle knowledge paywalls, and place verified, life-saving clinical facts directly into the hands of every developer, doctor, caregiver, and child fighting for their family."*
+> _"Code cannot cure cancer. But code can destroy the fog of misinformation, dismantle knowledge paywalls, and place verified, life-saving clinical facts directly into the hands of every developer, doctor, caregiver, and child fighting for their family."_
 
-This project was not born out of a hackathon prompt or a venture pitch. 
+This project was not born out of a hackathon prompt or a venture pitch.
 
 **It was born in hospital waiting rooms, holding my parents' hands.**
 
-Within a span that felt like an eternity, **both my mother and my father were diagnosed with cancer.** 
+Within a span that felt like an eternity, **both my mother and my father were diagnosed with cancer.**
 
-If you have ever loved someone walking through that valley, you know the suffocating weight that follows. The diagnosis hits like an earthquake. Then comes the second trauma: navigating the labyrinth of cancer information. 
+If you have ever loved someone walking through that valley, you know the suffocating weight that follows. The diagnosis hits like an earthquake. Then comes the second trauma: navigating the labyrinth of cancer information.
 
 Late at night, while my parents slept between chemotherapy cycles, I found myself desperately searching online:
+
 - Conflicting forum posts and algorithmic clickbait.
 - Contradictory screening ages between different countries.
 - Paywalled medical research papers written in opaque jargon.
-- No direct way to know: *Where did this fact come from? Is this guideline current? Does this apply in our country?*
+- No direct way to know: _Where did this fact come from? Is this guideline current? Does this apply in our country?_
 
 I am an engineer. In software, we demand immutability, cryptographic provenance, and single sources of truth. Yet in the fight for our parents' lives, the internet offered guesswork and uncertainty.
 
 I made a silent promise: **I would build the public API I desperately needed on those dark nights.**
 
 **CancerInfo API** is the project built toward that promise. Its goals are:
+
 - **100% Free Forever**: No paywalls, no monetization gates, no commercial exploitation.
 - **Record-Level Source Transparency**: Preserve the exact document, organization, jurisdiction and attribution behind each published record. The current model stores these links, but review and publication enforcement remain launch requirements. Registry entries include NCI, WHO, NHS, Cancer Australia and CDC; registration does not certify rights or supported ingestion.
 - **Structured for Builders**: JSON retrieval, taxonomy resolution, country filtering and heuristic text search for informational integrations. The service does not calculate screening eligibility, provide treatment advice or guarantee that a downstream AI system avoids hallucinations.
 
-*To my mom and dad: This code is dedicated to your courage, your grace, and every family still fighting.* 🕊️
+_To my mom and dad: This code is dedicated to your courage, your grace, and every family still fighting._ 🕊️
 
 ---
 
@@ -80,6 +83,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 3000
 Check out the reviewed Python branch before running these commands if the repository default differs. The root `.env.example` still contains legacy Gemini/app-hosting comments; those do not establish an LLM dependency. Set a real admin secret before exposing any administrative endpoint.
 
 ### 1. Test via cURL
+
 ```bash
 # Health check
 curl -s http://localhost:3000/v1/health
@@ -95,6 +99,7 @@ curl -s "http://localhost:3000/v1/search?q=CRC" | jq .
 ```
 
 ### 2. Python
+
 ```python
 import requests
 
@@ -111,22 +116,28 @@ for record in response.json()["data"]["records"]:
 ```
 
 ### 3. JavaScript / TypeScript
+
 ```typescript
-const res = await fetch("http://localhost:3000/v1/cancers/colorectal-cancer/screening?country=GB");
+const res = await fetch(
+  "http://localhost:3000/v1/cancers/colorectal-cancer/screening?country=GB",
+);
 if (!res.ok) throw new Error(`API request failed: ${res.status}`);
 const { data } = await res.json();
 for (const record of data.records) {
   console.log(record.content, record.jurisdiction);
-  for (const citation of record.sources) console.log(citation.organization, citation.url);
+  for (const citation of record.sources)
+    console.log(citation.organization, citation.url);
 }
 ```
 
 ### 4. Container development path, verification pending
+
 ```bash
 git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
 cd CancerInfo-API
 docker compose up -d
 ```
+
 Visit `http://localhost:3000/docs` after the service starts. Docker build/boot was not run in this review. The current command hardcodes port 3000, and the compose volume does not cover the configured SQLite file. Correct persistence and verify restart/restore before production use.
 
 ---
@@ -158,17 +169,20 @@ Visit `http://localhost:3000/docs` after the service starts. Docker build/boot w
 ```
 
 The following is an illustrative response fragment, not a clinical example or a guarantee. The current implementation does not yet enforce every publication requirement. Unknown publisher dates should remain null rather than be inferred from retrieval time:
+
 ```json
 {
   "category": "overview",
   "content": "Illustrative content omitted; use a reviewed source record.",
-  "jurisdiction": {"scope": "COUNTRY", "country": "US"},
-  "sources": [{
-    "source_id": "nci-us",
-    "organization": "National Cancer Institute",
-    "url": "https://www.cancer.gov/",
-    "source_updated_at": null
-  }]
+  "jurisdiction": { "scope": "COUNTRY", "country": "US" },
+  "sources": [
+    {
+      "source_id": "nci-us",
+      "organization": "National Cancer Institute",
+      "url": "https://www.cancer.gov/",
+      "source_updated_at": null
+    }
+  ]
 }
 ```
 
@@ -178,24 +192,24 @@ This fragment is abbreviated. The homepage above is illustrative, not an accepta
 
 ## 🚀 API Endpoints
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/v1/health` | System health, database connectivity, uptime, and loaded registry metrics |
-| `GET` | `/v1/cancers` | List all canonical cancers with pagination and anatomical site filter |
-| `GET` | `/v1/cancers/{cancer}` | Detail view: canonical name, ICD codes, aliases, and available sections |
-| `GET` | `/v1/cancers/{cancer}/sections` | Summary of populated categories, record counts, and jurisdictions |
-| `GET` | `/v1/cancers/{cancer}/sources` | Sources linked to active records; source-rights gating remains open |
-| `GET` | `/v1/cancers/{cancer}/versions` | Stored version entries; uniqueness and historical provenance need repair |
-| `GET` | `/v1/cancers/{cancer}/{category}` | **Core Knowledge**: Normalized facts with citation URLs and country filters |
-| `GET` | `/v1/search` | Multi-factor search resolving abbreviations (`CRC`), aliases, and symptoms |
-| `GET` | `/v1/sources` | Seeded registry metadata; permission labels require document review |
-| `GET` | `/v1/sources/{id}` | Detailed profile for an individual health authority |
-| `GET` | `/v1/categories` | Catalog of all 37 standardized cancer knowledge categories |
-| `GET` | `/v1/countries` | Global jurisdictions represented across the knowledge base |
-| `GET` | `/v1/coverage` | Stored active-record coverage counts; not clinical or rights approval |
-| `GET` | `/docs` | Interactive Swagger UI console |
-| `GET` | `/redoc` | High-readability ReDoc API documentation |
-| `GET` | `/openapi.json` | OpenAPI 3.1 schema specification |
+| Method | Endpoint                          | Description                                                                 |
+| :----- | :-------------------------------- | :-------------------------------------------------------------------------- |
+| `GET`  | `/v1/health`                      | System health, database connectivity, uptime, and loaded registry metrics   |
+| `GET`  | `/v1/cancers`                     | List all canonical cancers with pagination and anatomical site filter       |
+| `GET`  | `/v1/cancers/{cancer}`            | Detail view: canonical name, ICD codes, aliases, and available sections     |
+| `GET`  | `/v1/cancers/{cancer}/sections`   | Summary of populated categories, record counts, and jurisdictions           |
+| `GET`  | `/v1/cancers/{cancer}/sources`    | Sources linked to active records; source-rights gating remains open         |
+| `GET`  | `/v1/cancers/{cancer}/versions`   | Stored version entries; uniqueness and historical provenance need repair    |
+| `GET`  | `/v1/cancers/{cancer}/{category}` | **Core Knowledge**: Normalized facts with citation URLs and country filters |
+| `GET`  | `/v1/search`                      | Multi-factor search resolving abbreviations (`CRC`), aliases, and symptoms  |
+| `GET`  | `/v1/sources`                     | Seeded registry metadata; permission labels require document review         |
+| `GET`  | `/v1/sources/{id}`                | Detailed profile for an individual health authority                         |
+| `GET`  | `/v1/categories`                  | Catalog of all 37 standardized cancer knowledge categories                  |
+| `GET`  | `/v1/countries`                   | Global jurisdictions represented across the knowledge base                  |
+| `GET`  | `/v1/coverage`                    | Stored active-record coverage counts; not clinical or rights approval       |
+| `GET`  | `/docs`                           | Interactive Swagger UI console                                              |
+| `GET`  | `/redoc`                          | High-readability ReDoc API documentation                                    |
+| `GET`  | `/openapi.json`                   | OpenAPI 3.1 schema specification                                            |
 
 ---
 
@@ -255,11 +269,13 @@ Publication is planned and remains conditional on the acceptance gates:
 ## 🧪 Automated Testing
 
 Run the existing regression suite against an isolated database:
+
 ```bash
 DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python3 -m pytest tests/ -v
 ```
 
 The suite samples the following areas; it does not prove exhaustive coverage:
+
 - Health and database connectivity (`/v1/health`, `/health`, `/api/health`)
 - Canonical cancer slug resolution and pagination
 - Clinical abbreviation matching (`CRC` -> `colorectal-cancer`)
@@ -288,7 +304,7 @@ Please read our **[Contributing Guidelines](CONTRIBUTING.md)** and **[Code of Co
 
 ### Dedicated with infinite love to my parents, and to every cancer warrior across the world.
 
-*If this project touches your heart or helps your work, please star the repository on GitHub to help other developers find it.* ⭐
+_If this project touches your heart or helps your work, please star the repository on GitHub to help other developers find it._ ⭐
 
 **CancerInfo API — Free knowledge for a cancer-free future.**
 

@@ -95,11 +95,13 @@ This guide describes how to validate the CancerInfo API codebase, test endpoints
 The codebase includes a comprehensive pytest suite testing every endpoint, normalizer, and adapter.
 
 #### Run all tests:
+
 ```bash
 python3 -m pytest tests/ -v
 ```
 
 #### Coverage by test module:
+
 - `tests/test_health.py`: Database connectivity, uptime counter, and registry count verification.
 - `tests/test_cancers.py`: Canonical cancer retrieval, alias resolution, pagination, section availability.
 - `tests/test_consensus_facts.py`: Decoupled biological consensus facts, multi-source corroboration, and presentation search.
@@ -142,6 +144,7 @@ curl -s -I "http://localhost:3000/v1/cancers"
 ```
 
 Verify these headers:
+
 - `x-request-id`: Unique UUID4 generated per request.
 - `x-response-time-ms`: Server execution latency in milliseconds.
 - `x-ratelimit-limit` & `x-ratelimit-remaining`: Sliding window rate limit status.

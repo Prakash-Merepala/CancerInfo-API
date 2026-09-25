@@ -8,7 +8,7 @@ Thank you for your interest in contributing to **CancerInfo API**! Every pull re
 
 1. **Suggest or Add New Authoritative Health Sources**:
    - We strictly aggregate from **Tier 1 (Government & Multilateral Public Health Bodies)** and **Tier 2 (Premier Accredited Cancer Centers & Societies)**.
-   - We do *not* ingest private sponsored content, unverified forums, or commercial blogs.
+   - We do _not_ ingest private sponsored content, unverified forums, or commercial blogs.
 2. **Expand Canonical Cancer Mappings & Aliases**:
    - Add international colloquial names, abbreviations (e.g. `NSCLC`, `ALL`, `CML`), or ICD-O-3 codes in `app/ingestion/seed.py`.
 3. **Enhance Taxonomy & Classification**:
@@ -49,7 +49,6 @@ Before opening a pull request, ensure all CI validation gates pass locally:
 3. `DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v -ra -W default` — Run the full existing suite and meaningful regression tests for the changed behavior.
 4. `python -c "from app.main import app; app.openapi()"` — OpenAPI 3.1 schema generates without error.
 5. `curl -f http://localhost:3000/health` — Local server health check returns 200 OK.
-
 
 ---
 

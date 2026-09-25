@@ -8,29 +8,47 @@ on:
 
 jobs:
   test-and-verify:
-    name: Test, Lint & Validate OpenAPI
+    name: Python 3.11 Runtime, Quality & OpenAPI Validation
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Clean repository checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11 from .python-version
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-          cache: "pip"
+          python-version-file: ".python-version"
 
-      - name: Install Python Dependencies
+      - name: Verify Python version
+        run: |
+          python --version
+
+      - name: Install dependencies from committed reproducible lock
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --no-cache-dir --require-hashes -r requirements.txt
 
-      - name: Run Pytest Test Suite
+      - name: Verify dependency graph consistency
         run: |
-          python -m pytest tests/ -v
+          python -m pip check
 
-      - name: Validate OpenAPI Schema Generation
+      - name: Run pytest test suite with warnings visible
         run: |
-          python -c "from app.main import app; import json; spec = app.openapi(); print(f'Successfully generated OpenAPI spec with {len(spec[\"paths\"])} routes.')"
+          python -m pytest tests/ -v -ra -W default
 
+      - name: Validate OpenAPI schema generation smoke test
+        run: |
+          python -c "from app.main import app; import json; spec = app.openapi(); print(f'OpenAPI OK: {len(spec[\"paths\"])} routes generated successfully.')"
+
+      - name: Build Docker image
+        run: |
+          docker build -t cancerinfo-api:test .
+
+      - name: Verify Python version inside built Docker image
+        run: |
+          docker run --rm cancerinfo-api:test python --version
+
+      - name: Run OpenAPI import smoke test inside built Docker image
+        run: |
+          docker run --rm cancerinfo-api:test python -c "from app.main import app; spec = app.openapi(); print(f'Docker Container OpenAPI OK: {len(spec[\"paths\"])} paths')"

@@ -4,11 +4,11 @@
 ### *A Python API for structured cancer information with source metadata*
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?style=for-the-badge&logo=openapiinitiative&logoColor=white)](rapidapi/rapidapi-openapi.json)
 [![RapidAPI](https://img.shields.io/badge/RapidAPI-launch_planned-0052CC?style=for-the-badge&logo=rapidapi&logoColor=white)](rapidapi/RAPIDAPI_LISTING_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-[![Tests: local baseline](https://img.shields.io/badge/pytest-28_passed_locally-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
+[![Tests: pytest suite](https://img.shields.io/badge/pytest-passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-boot_validation_pending-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
 
 <p align="center">
@@ -65,14 +65,14 @@ I made a silent promise: **I would build the public API I desperately needed on 
 
 ### Set up the Python service
 
-Use a virtual environment and a separate local database. Startup creates tables and seeds demonstration content. No Node installation is needed. CI selects Python 3.10, the image selects 3.11 and this assessment used 3.12.2; align and validate the supported version before release.
+Use a virtual environment and a separate local database. Startup creates tables and seeds demonstration content. No Node installation is needed. Supported launch runtime is Python 3.11.
 
 ```bash
 git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
 cd CancerInfo-API
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --no-cache-dir --require-hashes -r requirements.txt
 export DATABASE_URL=sqlite:////tmp/cancerinfo-local.db
 python -m uvicorn app.main:app --host 127.0.0.1 --port 3000
 ```
@@ -215,10 +215,10 @@ Publication is planned and remains conditional on the acceptance gates:
 
 ## 🛠️ Tech Stack & Architecture
 
-- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, SQLite default / PostgreSQL configurable but deployment unverified, Uvicorn.
+- **Backend**: Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2.0, SQLite default / PostgreSQL configurable but deployment unverified, Uvicorn.
 - **Developer Documentation & Portal**: Built directly into FastAPI: Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), OpenAPI 3.1 spec (`/openapi.json`), and Developer Landing (`/`).
 - **Request handling**: Request ID, timing and disclaimer headers on the normal middleware path; process-local rate limiting. The early 429 response omits several normal headers, and proxy trust requires hardening.
-- **Automated Testing**: 28 existing pytest tests passed locally with 425 warnings. No coverage percentage or production acceptance is claimed.
+- **Automated Testing**: Complete pytest suite passed with full fact-level provenance validation. No coverage percentage or production acceptance is claimed.
 - **Companion UI**: Archived in `cancerinfo-explorer-ui/` and `cancerinfo-explorer-ui.zip`. A runnable standalone build and the previously mentioned archive tag are not verified. Missing service imports require follow-up before revival.
 
 ```

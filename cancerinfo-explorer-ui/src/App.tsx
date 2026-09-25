@@ -45,22 +45,10 @@ const SAMPLE_ENDPOINTS = [
     description: "Resolves canonical cancer with aliases, taxonomy codes, and available categories.",
   },
   {
-    name: "Universal Symptoms (Decoupled Consensus)",
-    method: "GET",
-    endpoint: "/v1/cancers/breast-cancer/symptoms",
-    description: "Universal symptoms checklist with multi-source corroboration badges across NCI, NHS, and WHO.",
-  },
-  {
-    name: "Symptoms with Local Authority Tags (US)",
+    name: "Symptoms with Provenance (US)",
     method: "GET",
     endpoint: "/v1/cancers/breast-cancer/symptoms?country=US",
-    description: "Personalized citation tags prioritizing US authorities (NCI, CDC) for all universal symptoms.",
-  },
-  {
-    name: "Universal Symptom Search (cough with blood)",
-    method: "GET",
-    endpoint: "/v1/search?q=cough with blood",
-    description: "Multi-cancer search finding matching consensus symptoms and corroborating health bodies.",
+    description: "Fact-level provenance from NCI (US) with direct source URLs and legal attribution.",
   },
   {
     name: "Screening Guidelines (UK / NHS)",
@@ -72,7 +60,7 @@ const SAMPLE_ENDPOINTS = [
     name: "Search by Abbreviation (CRC)",
     method: "GET",
     endpoint: "/v1/search?q=CRC",
-    description: "Multi-factor search resolving abbreviations to canonical Colorectal Cancer.",
+    description: "Multi-factor search supporting aliases, abbreviations, and clinical symptoms.",
   },
   {
     name: "Source Registry & Licensing",

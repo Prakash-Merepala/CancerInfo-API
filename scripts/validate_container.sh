@@ -232,10 +232,15 @@ if [ "$STATUS_CODE" != "200" ]; then
 fi
 echo "PASSED."
 
-# Check exec pattern / signal handling (uvicorn runs directly or as child replacing shell)
-echo -n "  - Verifying uvicorn process running in container... "
-docker exec "$CONTAINER_CUSTOM" pgrep -f uvicorn > /dev/null
-echo "PASSED (uvicorn active)."
+# Check exec pattern / signal handling (uvicorn runs as PID 1, replacing shell)
+echo -n "  - Verifying uvicorn process running as PID 1 in container... "
+PID1_CMD=$(docker exec "$CONTAINER_CUSTOM" cat /proc/1/cmdline | tr '\0' ' ')
+if echo "$PID1_CMD" | grep -q "uvicorn"; then
+    echo "PASSED (PID 1 is uvicorn)."
+else
+    echo "FAILED! Expected uvicorn as PID 1, got: ${PID1_CMD}"
+    exit 1
+fi
 
 # Clean up custom container & volume
 docker rm -f "$CONTAINER_CUSTOM" > /dev/null
@@ -271,7 +276,7 @@ echo "PASSED."
 echo "  - Inserting durability test probe record into Container A..."
 docker exec "$CONTAINER_PERSIST_A" python -c "
 from app.database.session import SessionLocal
-from app.models.cancer import Cancer
+from app.models import Cancer
 db = SessionLocal()
 probe = Cancer(
     slug='durability-probe-cancer',
@@ -317,7 +322,7 @@ echo "PASSED."
 echo -n "  - Verifying probe record in SQLite database session in Container B... "
 docker exec "$CONTAINER_PERSIST_B" python -c "
 from app.database.session import SessionLocal
-from app.models.cancer import Cancer
+from app.models import Cancer
 db = SessionLocal()
 probe = db.query(Cancer).filter(Cancer.slug == 'durability-probe-cancer').first()
 assert probe is not None, 'Probe record missing in Container B database!'

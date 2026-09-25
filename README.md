@@ -80,7 +80,7 @@ export DATABASE_URL=sqlite:////tmp/cancerinfo-local.db
 python -m uvicorn app.main:app --host 127.0.0.1 --port 3000
 ```
 
-Check out the reviewed Python branch before running these commands if the repository default differs. The root `.env.example` still contains legacy Gemini/app-hosting comments; those do not establish an LLM dependency. Set a real admin secret before exposing any administrative endpoint.
+Check out the reviewed Python branch before running these commands if the repository default differs. The root `.env.example` documents the Python API settings only. Gemini and AI Studio hosting variables are not required. Set a unique admin secret in your deployment environment before exposing any administrative endpoint; never commit the real value.
 
 ### 1. Test via cURL
 

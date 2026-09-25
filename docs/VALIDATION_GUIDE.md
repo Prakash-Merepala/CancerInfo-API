@@ -186,19 +186,19 @@ This automated test suite verifies:
 2. **Dynamic Runtime Port:**
    - Container honors runtime `PORT` variable via `exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000}`.
    - Default port (`3000`) boots and responds to all endpoints.
-   - Non-default port (`PORT=8081`) boots and responds to all endpoints.
-   - Clean signal handling is ensured by `exec` replacing the shell with uvicorn.
+   - Non-default port (`PORT=8081`) boots and responds to `/v1/health` and `/v1/cancers`; the full endpoint smoke checks run on port 3000.
+   - The script verifies Uvicorn runs as PID 1 after replacing the shell with `exec`. It does not assert graceful-shutdown timing or in-flight request completion.
 3. **Core Endpoints Contract:**
-   - `/v1/health`: Returns HTTP 200 and healthy database connectivity status.
-   - `/v1/cancers`: Returns HTTP 200 with valid canonical cancer records.
+   - `/v1/health`: Returns HTTP 200. The script does not assert the JSON database-status field.
+   - `/v1/cancers`: Returns HTTP 200 with a `canonical_name` marker in the response. This is a smoke check, not full JSON/schema validation.
    - `/`: Returns HTTP 200 HTML portal or JSON metadata depending on `Accept` header.
    - `/docs`: Returns HTTP 200 Swagger UI.
    - `/redoc`: Returns HTTP 200 ReDoc UI.
-   - `/openapi.json`: Returns HTTP 200 OpenAPI 3.1 schema.
+   - `/openapi.json`: Returns HTTP 200 with an `openapi` marker. Container import also generates a non-empty paths map; the script does not validate the complete OpenAPI contract.
 4. **Data Durability Across Container Lifecycle:**
-   - Container A starts with named volume `cancerinfo_data` mounted at `/app/data` with `DATABASE_URL=sqlite:////app/data/cancerinfo.db`.
+   - Container A starts with a uniquely named disposable `ciapi_vol_persist_*` test volume mounted at `/app/data` with `DATABASE_URL=sqlite:////app/data/cancerinfo.db`.
    - A probe record is written to the database in Container A.
-   - Container A is stopped and removed (simulating crash or upgrade).
+   - Container A is stopped and removed (testing replacement, not abrupt crash recovery).
    - Fresh Container B starts attached to the same volume.
    - The probe record is verified to persist via both HTTP endpoint and direct database session.
 5. **Production Database Contract:**

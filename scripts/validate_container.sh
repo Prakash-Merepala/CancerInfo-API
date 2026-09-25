@@ -90,7 +90,7 @@ echo "PASSED (not present in image)."
 
 # D: Verify Python 3.11 runtime inside image
 echo -n "  - Checking Python runtime inside image... "
-PY_VER=$(docker run --rm "$IMAGE_NAME" python --version)
+PY_VER=$(docker run --rm "$IMAGE_NAME" python -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version; print(sys.version.split()[0])')
 echo "PASSED (${PY_VER})."
 
 # E: Verify OpenAPI generation inside image
@@ -117,7 +117,7 @@ echo "Validating core HTTP endpoints on default port (${PORT_DEFAULT}):"
 echo -n "  - GET /v1/health (HTTP 200)... "
 HEALTH_RESP=$(curl -s -w "\n%{http_code}" "http://127.0.0.1:${PORT_DEFAULT}/v1/health")
 STATUS_CODE=$(echo "$HEALTH_RESP" | tail -n1)
-BODY=$(echo "$HEALTH_RESP" | head -n-1)
+BODY=${HEALTH_RESP%$'\n'*}
 if [ "$STATUS_CODE" != "200" ]; then
     echo "FAILED! Expected HTTP 200, got ${STATUS_CODE}."
     exit 1
@@ -128,7 +128,7 @@ echo "PASSED."
 echo -n "  - GET /v1/cancers (HTTP 200 & valid JSON list)... "
 CANCERS_RESP=$(curl -s -w "\n%{http_code}" "http://127.0.0.1:${PORT_DEFAULT}/v1/cancers")
 STATUS_CODE=$(echo "$CANCERS_RESP" | tail -n1)
-BODY=$(echo "$CANCERS_RESP" | head -n-1)
+BODY=${CANCERS_RESP%$'\n'*}
 if [ "$STATUS_CODE" != "200" ]; then
     echo "FAILED! Expected HTTP 200, got ${STATUS_CODE}."
     exit 1
@@ -140,7 +140,7 @@ echo "PASSED."
 echo -n "  - GET / [Accept: text/html] (HTTP 200 & HTML)... "
 HTML_RESP=$(curl -s -w "\n%{http_code}" -H "Accept: text/html" "http://127.0.0.1:${PORT_DEFAULT}/")
 STATUS_CODE=$(echo "$HTML_RESP" | tail -n1)
-BODY=$(echo "$HTML_RESP" | head -n-1)
+BODY=${HTML_RESP%$'\n'*}
 if [ "$STATUS_CODE" != "200" ]; then
     echo "FAILED! Expected HTTP 200, got ${STATUS_CODE}."
     exit 1
@@ -152,7 +152,7 @@ echo "PASSED."
 echo -n "  - GET / [Accept: application/json] (HTTP 200 & JSON metadata)... "
 JSON_RESP=$(curl -s -w "\n%{http_code}" -H "Accept: application/json" "http://127.0.0.1:${PORT_DEFAULT}/")
 STATUS_CODE=$(echo "$JSON_RESP" | tail -n1)
-BODY=$(echo "$JSON_RESP" | head -n-1)
+BODY=${JSON_RESP%$'\n'*}
 if [ "$STATUS_CODE" != "200" ]; then
     echo "FAILED! Expected HTTP 200, got ${STATUS_CODE}."
     exit 1
@@ -184,7 +184,7 @@ echo "PASSED."
 echo -n "  - GET /openapi.json (HTTP 200 OpenAPI schema)... "
 OPENAPI_RESP=$(curl -s -w "\n%{http_code}" "http://127.0.0.1:${PORT_DEFAULT}/openapi.json")
 STATUS_CODE=$(echo "$OPENAPI_RESP" | tail -n1)
-BODY=$(echo "$OPENAPI_RESP" | head -n-1)
+BODY=${OPENAPI_RESP%$'\n'*}
 if [ "$STATUS_CODE" != "200" ]; then
     echo "FAILED! Expected HTTP 200, got ${STATUS_CODE}."
     exit 1

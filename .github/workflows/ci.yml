@@ -2,7 +2,7 @@ name: CI / Quality & Compliance Pipeline
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "master", "fix/CIAPI-L001-python-ci-runtime-cleanup"]
   pull_request:
     branches: ["main", "master"]
 

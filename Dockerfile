@@ -9,21 +9,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Create durable data directory for container-local storage
+RUN mkdir -p /app/data
 
-# Copy application, documentation, database, and tests
+COPY requirements.txt .
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+
+# Copy application code, documentation, and API specifications
 COPY app/ ./app/
 COPY docs/ ./docs/
-COPY tests/ ./tests/
 COPY rapidapi/ ./rapidapi/
-COPY cancerinfo.db ./cancerinfo.db
 
 EXPOSE 3000
 
 ENV PORT=3000
 ENV ENVIRONMENT=production
+ENV DATABASE_URL=sqlite:////app/data/cancerinfo.db
 ENV PYTHONUNBUFFERED=1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000"]
-
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000}"]

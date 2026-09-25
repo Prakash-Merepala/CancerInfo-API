@@ -8,7 +8,13 @@ from app.database.session import get_db
 from app.repositories.search_repo import SearchRepository
 from app.schemas.cancer import CancerSummaryOut
 from app.schemas.common import MetaInfo, StandardResponse
-from app.schemas.content import ContentRecordOut, JurisdictionOut, ProvenanceSourceOut
+from app.schemas.content import (
+    ConsensusItemOut,
+    ContentRecordOut,
+    CorroboratingSourceOut,
+    JurisdictionOut,
+    ProvenanceSourceOut,
+)
 from app.schemas.search import SearchResultItem, SearchResultsOut
 
 router = APIRouter(prefix="/search", tags=["Search"])
@@ -16,7 +22,7 @@ router = APIRouter(prefix="/search", tags=["Search"])
 
 @router.get("", response_model=StandardResponse[SearchResultsOut])
 def search(
-    q: str = Query(..., min_length=1, description="Search query string, e.g. 'bowel cancer', 'CRC', 'pancreatic symptoms'"),
+    q: str = Query(..., min_length=1, description="Search query string, e.g. 'bowel cancer', 'CRC', 'cough with blood'"),
     category: Optional[str] = Query(None, description="Optional canonical category filter"),
     country: Optional[str] = Query(None, description="Country filter, e.g. 'US', 'GB', 'AU', 'GLOBAL'"),
     source: Optional[str] = Query(None, description="Source ID filter, e.g. 'nci-us', 'who-global'"),
@@ -49,6 +55,31 @@ def search(
             aliases=[a.alias for a in cancer_obj.aliases],
         )
 
+        consensus_item_out = None
+        if r.get("consensus_item"):
+            cf = r["consensus_item"]
+            corrob_sources = [
+                CorroboratingSourceOut(
+                    source_id=cs.source.id,
+                    organization=cs.source.organization_name,
+                    authority_type=cs.source.authority_type,
+                    trust_tier=cs.source.trust_tier,
+                    country_code=cs.country_code or cs.source.country_code,
+                    url=cs.source_url,
+                    quote=cs.quote_snippet,
+                    attribution_text=cs.attribution_text or cs.source.attribution_text,
+                )
+                for cs in cf.corroborating_sources
+            ]
+            consensus_item_out = ConsensusItemOut(
+                id=cf.id,
+                fact_key=cf.fact_key,
+                sign=cf.title,
+                clinical_detail=cf.clinical_detail,
+                corroboration_count=cf.corroboration_count,
+                corroborated_by=corrob_sources,
+            )
+
         record_out = None
         if r.get("record"):
             rec = r["record"]
@@ -68,17 +99,20 @@ def search(
                 )
                 for cs in rec.sources
             ]
+            jurisdiction_out = None
+            if rec.country_code:
+                jurisdiction_out = JurisdictionOut(
+                    scope=rec.jurisdiction_scope,
+                    country=rec.country_code,
+                    region=rec.region_code,
+                )
             record_out = ContentRecordOut(
                 id=rec.id,
                 category=rec.category,
                 subcategory=rec.subcategory,
                 content=rec.content,
                 content_type=rec.content_type,
-                jurisdiction=JurisdictionOut(
-                    scope=rec.jurisdiction_scope,
-                    country=rec.country_code,
-                    region=rec.region_code,
-                ),
+                jurisdiction=jurisdiction_out,
                 language=rec.language,
                 audience=rec.audience,
                 disagreement_status=rec.disagreement_status,
@@ -95,6 +129,7 @@ def search(
                 cancer=cancer_out,
                 category=r.get("category"),
                 snippet=r.get("snippet"),
+                consensus_item=consensus_item_out,
                 record=record_out,
                 matched_terms=r.get("matched_terms", []),
             )

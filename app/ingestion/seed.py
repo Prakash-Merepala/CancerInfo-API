@@ -7,6 +7,8 @@ from app.core.constants import TrustTier, LicenseStatus
 from app.models import (
     Cancer,
     CancerAlias,
+    ConsensusFact,
+    ConsensusFactSource,
     ContentRecord,
     ContentSource,
     ContentVersion,
@@ -19,11 +21,17 @@ from app.normalization.hash import compute_content_hash
 
 def seed_database(db: Session) -> None:
     """
-    Seeds the Source Registry, Canonical Cancers, and initial verified content records.
-    Idempotent: skips if sources already exist.
+    Seeds the Source Registry, Canonical Cancers, initial verified content records,
+    and pre-computed consensus facts. Idempotent.
     """
-    if db.query(Source).count() > 0:
-        return
+    if db.query(Source).count() == 0:
+        _seed_initial_core(db)
+
+    if db.query(ConsensusFact).count() == 0:
+        seed_consensus_facts(db)
+
+
+def _seed_initial_core(db: Session) -> None:
 
     # 1. Seed Source Registry
     sources_data = [
@@ -635,5 +643,619 @@ def seed_database(db: Session) -> None:
             created_at=datetime.utcnow(),
         )
         db.add(cv)
+
+    db.commit()
+
+
+def seed_consensus_facts(db: Session) -> None:
+    """
+    Seeds pre-computed atomic consensus items for universal biological categories (symptoms, etc.)
+    with fact-level multi-source corroboration links.
+    """
+    cancers = {c.slug: c for c in db.query(Cancer).all()}
+    sources = {s.id: s for s in db.query(Source).all()}
+
+    if not cancers or not sources:
+        return
+
+    consensus_symptoms_data = [
+        # --- Breast Cancer ---
+        {
+            "cancer_slug": "breast-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-breast-lump",
+            "title": "New lump or area of thickened tissue in breast or underarm",
+            "clinical_detail": "Most common presenting symptom. Often painless and firm with irregular edges, though can be tender or soft. Any new palpable mass requires clinical evaluation.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/breast/symptoms",
+                    "quote_snippet": "A new lump or thickening in the breast or underarm.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/breast-cancer/symptoms/",
+                    "quote_snippet": "A lump or an area of thickened tissue in their breast.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "who-global",
+                    "source_url": "https://www.who.int/news-room/fact-sheets/detail/breast-cancer",
+                    "quote_snippet": "Breast lump or thickening.",
+                    "country_code": "GLOBAL",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "breast-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-breast-skin-changes",
+            "title": "Skin changes (dimpling, puckering, redness, or peau d'orange)",
+            "clinical_detail": "Changes in skin texture resembling an orange peel, redness, flaking, or localized indentation of the breast skin.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/breast/symptoms",
+                    "quote_snippet": "Dimpling or puckering of the breast skin, redness or flaking.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/breast-cancer/symptoms/",
+                    "quote_snippet": "Skin changes such as puckering or dimpling.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "breast-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-breast-nipple-changes",
+            "title": "Nipple inversion, alteration in shape, or spontaneous non-milk discharge",
+            "clinical_detail": "Particularly significant if discharge is spontaneous, unilateral, or blood-stained, or if the nipple turns inward.",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/breast/symptoms",
+                    "quote_snippet": "An inverted nipple and nipple discharge other than breast milk.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/breast-cancer/symptoms/",
+                    "quote_snippet": "Discharge from either nipple, which may be streaked with blood.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Lung Cancer ---
+        {
+            "cancer_slug": "lung-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-lung-persistent-cough",
+            "title": "Persistent cough that worsens or does not go away",
+            "clinical_detail": "A new cough that lasts more than 2 to 3 weeks, or a chronic cough that changes in tone, severity, or character.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/lung/symptoms",
+                    "quote_snippet": "A cough that does not go away or gets worse.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/lung-cancer/symptoms/",
+                    "quote_snippet": "A cough that does not go away after 3 weeks.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "who-global",
+                    "source_url": "https://www.who.int/news-room/fact-sheets/detail/cancer",
+                    "quote_snippet": "Persistent cough or difficulty breathing.",
+                    "country_code": "GLOBAL",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "lung-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-lung-cough-blood",
+            "title": "Coughing up blood (hemoptysis) or rust-colored sputum",
+            "clinical_detail": "Even small amounts of blood or persistent rust-colored mucus in phlegm require immediate clinical investigation and diagnostic chest imaging.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/lung/symptoms",
+                    "quote_snippet": "Coughing up blood or rust-colored sputum.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/lung-cancer/symptoms/",
+                    "quote_snippet": "Coughing up blood (haemoptysis).",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "cancer-australia",
+                    "source_url": "https://www.canceraustralia.gov.au/affected-cancer/cancer-types/lung-cancer/symptoms",
+                    "quote_snippet": "Coughing up blood or blood-stained phlegm.",
+                    "country_code": "AU",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "lung-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-lung-chest-pain",
+            "title": "Chest, shoulder, or back pain that worsens with deep breathing or coughing",
+            "clinical_detail": "Persistent thoracic discomfort, localized aching in the chest wall, shoulder, or upper back exacerbated by respiration.",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/lung/symptoms",
+                    "quote_snippet": "Chest pain that is often worse with deep breathing, coughing, or laughing.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/lung-cancer/symptoms/",
+                    "quote_snippet": "An ache or pain in the chest or shoulder.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "lung-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-lung-shortness-breath",
+            "title": "Shortness of breath (dyspnea) and persistent wheezing",
+            "clinical_detail": "Unexplained breathlessness during routine daily activities, sudden onset of wheezing, or persistent hoarseness.",
+            "display_order": 4,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/lung/symptoms",
+                    "quote_snippet": "Shortness of breath and hoarseness.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/lung-cancer/symptoms/",
+                    "quote_snippet": "Breathlessness when doing things you used to do without an issue.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Colorectal Cancer ---
+        {
+            "cancer_slug": "colorectal-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-crc-bowel-habit-change",
+            "title": "Persistent change in bowel habits (diarrhea, constipation, or narrowing of stool)",
+            "clinical_detail": "A persistent change in normal defecation frequency, consistency, or caliber lasting more than several weeks.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/colorectal/symptoms",
+                    "quote_snippet": "A change in bowel habits, such as diarrhea, constipation, or narrowing of the stool.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/bowel-cancer/symptoms/",
+                    "quote_snippet": "Changes in your poo, such as having softer poo, diarrhoea or constipation that is not usual for you.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "colorectal-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-crc-rectal-bleeding",
+            "title": "Rectal bleeding or blood mixed in stool (hematochezia or melena)",
+            "clinical_detail": "Blood may present as bright red on toilet paper or mixed into stool making it appear dark red, black, or tarry.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/colorectal/symptoms",
+                    "quote_snippet": "Rectal bleeding with bright red blood or blood in the stool.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/bowel-cancer/symptoms/",
+                    "quote_snippet": "Blood in your poo, which may look red or black.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "cancer-australia",
+                    "source_url": "https://www.canceraustralia.gov.au/affected-cancer/cancer-types/bowel-cancer/symptoms",
+                    "quote_snippet": "Blood in the stool or rectal bleeding.",
+                    "country_code": "AU",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "colorectal-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-crc-abdominal-pain",
+            "title": "Persistent abdominal discomfort, cramps, bloating, or fullness",
+            "clinical_detail": "Unexplained abdominal cramps, constant gas pains, or sensation of incomplete bowel evacuation (tenesmus).",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/colorectal/symptoms",
+                    "quote_snippet": "Persistent abdominal discomfort, such as cramps, gas, or pain.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/bowel-cancer/symptoms/",
+                    "quote_snippet": "Tummy pain or a lump in your tummy.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Prostate Cancer ---
+        {
+            "cancer_slug": "prostate-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-prostate-urinary-frequency",
+            "title": "Frequent urination, especially at night (nocturia)",
+            "clinical_detail": "Increased urinary urgency and waking repeatedly throughout the night to urinate.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/prostate/symptoms",
+                    "quote_snippet": "Frequent urination, especially at night.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/prostate-cancer/symptoms/",
+                    "quote_snippet": "Needing to pee more frequently, often during the night.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "prostate-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-prostate-weak-flow",
+            "title": "Weak or interrupted urine stream, and difficulty initiating urination",
+            "clinical_detail": "Hesitancy, prolonged straining, or sensation of incomplete bladder emptying.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/prostate/symptoms",
+                    "quote_snippet": "Weak or interrupted flow of urine, or straining to empty the bladder.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/prostate-cancer/symptoms/",
+                    "quote_snippet": "Difficulty in starting to pee, straining or taking a long time.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "prostate-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-prostate-hematuria",
+            "title": "Blood in urine (hematuria) or blood in semen (hematospermia)",
+            "clinical_detail": "Visible pink, red, or brownish discoloration in urine or ejaculatory fluid.",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/prostate/symptoms",
+                    "quote_snippet": "Blood in the urine or semen.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/prostate-cancer/symptoms/",
+                    "quote_snippet": "Blood in urine or blood in semen.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Pancreatic Cancer ---
+        {
+            "cancer_slug": "pancreatic-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-pancreatic-jaundice",
+            "title": "Jaundice (yellowing of skin and whites of eyes) with dark urine and pale stools",
+            "clinical_detail": "Caused by biliary obstruction when pancreatic head tumors compress the common bile duct, accompanied by pruritus (itchy skin).",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/pancreatic/symptoms",
+                    "quote_snippet": "Jaundice (yellowing of the skin and whites of the eyes), light-colored stools, and dark urine.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/pancreatic-cancer/symptoms/",
+                    "quote_snippet": "The whites of your eyes or your skin turn yellow (jaundice), with dark pee and pale poo.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "pancreatic-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-pancreatic-abdominal-back-pain",
+            "title": "Upper abdominal pain radiating to the middle or upper back",
+            "clinical_detail": "Dull, continuous epigastric ache that characteristically intensifies when lying flat and improves when leaning forward.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/pancreatic/symptoms",
+                    "quote_snippet": "Pain in the upper abdomen that may radiate to the back.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/pancreatic-cancer/symptoms/",
+                    "quote_snippet": "Pain at the top part of your tummy and your back, which may feel worse when eating or lying down.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "pancreatic-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-pancreatic-unexplained-weight-loss",
+            "title": "Unexplained weight loss and profound loss of appetite (anorexia)",
+            "clinical_detail": "Rapid unintentional weight loss due to pancreatic exocrine insufficiency and cancer cachexia.",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/pancreatic/symptoms",
+                    "quote_snippet": "Unexplained weight loss and loss of appetite.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/pancreatic-cancer/symptoms/",
+                    "quote_snippet": "Losing weight without trying to, or feeling not hungry.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Cervical Cancer ---
+        {
+            "cancer_slug": "cervical-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-cervical-abnormal-bleeding",
+            "title": "Abnormal vaginal bleeding (intermenstrual, postcoital, or postmenopausal)",
+            "clinical_detail": "Most common initial clinical manifestation. Any vaginal bleeding occurring between periods, after sexual intercourse, or after menopause requires prompt investigation.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/cervical/symptoms",
+                    "quote_snippet": "Vaginal bleeding between periods, after intercourse, or after menopause.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/cervical-cancer/symptoms/",
+                    "quote_snippet": "Unusual vaginal bleeding, such as bleeding between periods, after sex, or after the menopause.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "who-global",
+                    "source_url": "https://www.who.int/news-room/fact-sheets/detail/cervical-cancer",
+                    "quote_snippet": "Irregular blood spotting or light bleeding between periods or after menopause.",
+                    "country_code": "GLOBAL",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "cervical-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-cervical-unusual-discharge",
+            "title": "Unusual vaginal discharge (watery, pink, heavy, or foul-smelling)",
+            "clinical_detail": "Persistent, watery vaginal discharge that may contain traces of blood or produce a strong odor.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/cervical/symptoms",
+                    "quote_snippet": "Unusual vaginal discharge that may be watery, pink, or have a foul odor.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/cervical-cancer/symptoms/",
+                    "quote_snippet": "Changes to your vaginal discharge, which may smell different from usual.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "cervical-cancer",
+            "category": "symptoms",
+            "fact_key": "sym-cervical-pelvic-pain",
+            "title": "Pelvic pain or pain during sexual intercourse (dyspareunia)",
+            "clinical_detail": "Unexplained pelvic or lower back discomfort unrelated to normal menstrual cycles.",
+            "display_order": 3,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/cervical/symptoms",
+                    "quote_snippet": "Pelvic pain or pain during intercourse.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/cervical-cancer/symptoms/",
+                    "quote_snippet": "Pain during sex or pain in your lower back or pelvis.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+
+        # --- Melanoma ---
+        {
+            "cancer_slug": "melanoma",
+            "category": "symptoms",
+            "fact_key": "sym-melanoma-abcde",
+            "title": "Changes in a mole or new skin lesion adhering to the ABCDE criteria",
+            "clinical_detail": "Asymmetry (one half doesn't match the other), Border irregularity (notched or blurred edges), Color variation (shades of brown, black, blue, white, or red), Diameter (>6mm), and Evolving size, shape, or surface elevation.",
+            "display_order": 1,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/skin/symptoms",
+                    "quote_snippet": "A change in size, shape, color, or feel of an existing mole, or a new mole.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/melanoma-skin-cancer/symptoms/",
+                    "quote_snippet": "A new mole or a change in an existing mole following ABCDE rules.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+                {
+                    "source_id": "cancer-australia",
+                    "source_url": "https://www.canceraustralia.gov.au/affected-cancer/cancer-types/melanoma/symptoms",
+                    "quote_snippet": "Changes in the shape, colour, or size of a spot, or a new spot that looks different from other spots.",
+                    "country_code": "AU",
+                    "display_order": 3,
+                },
+            ],
+        },
+        {
+            "cancer_slug": "melanoma",
+            "category": "symptoms",
+            "fact_key": "sym-melanoma-itching-bleeding",
+            "title": "A spot, mole, or skin lesion that itches, hurts, oozes, or bleeds",
+            "clinical_detail": "Development of itching, localized tenderness, ulceration, crusting, or spontaneous bleeding in a cutaneous lesion.",
+            "display_order": 2,
+            "corroborations": [
+                {
+                    "source_id": "nci-us",
+                    "source_url": "https://www.cancer.gov/types/skin/symptoms",
+                    "quote_snippet": "A sore that does not heal, or oozing or bleeding from a mole.",
+                    "country_code": "US",
+                    "display_order": 1,
+                },
+                {
+                    "source_id": "nhs-uk",
+                    "source_url": "https://www.nhs.uk/conditions/melanoma-skin-cancer/symptoms/",
+                    "quote_snippet": "A mole that is itchy, painful, crusty or bleeding.",
+                    "country_code": "GB",
+                    "display_order": 2,
+                },
+            ],
+        },
+    ]
+
+    for item in consensus_symptoms_data:
+        cancer_obj = cancers.get(item["cancer_slug"])
+        if not cancer_obj:
+            continue
+
+        corrobs = item.pop("corroborations")
+        fact = ConsensusFact(
+            cancer_id=cancer_obj.id,
+            category=item["category"],
+            fact_key=item["fact_key"],
+            title=item["title"],
+            clinical_detail=item["clinical_detail"],
+            corroboration_count=len(corrobs),
+            display_order=item["display_order"],
+            active=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(fact)
+        db.flush()
+
+        for c_data in corrobs:
+            src = sources.get(c_data["source_id"])
+            if not src:
+                continue
+
+            cfs = ConsensusFactSource(
+                consensus_fact_id=fact.id,
+                source_id=src.id,
+                source_url=c_data["source_url"],
+                quote_snippet=c_data["quote_snippet"],
+                attribution_text=src.attribution_text,
+                country_code=c_data.get("country_code", src.country_code),
+                display_order=c_data.get("display_order", 0),
+                last_verified_at=datetime.utcnow(),
+            )
+            db.add(cfs)
 
     db.commit()

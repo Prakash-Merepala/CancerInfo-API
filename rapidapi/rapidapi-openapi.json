@@ -136,7 +136,9 @@
           }
         ],
         "responses": {
-          "200": { "description": "Normalized category content records with provenance" }
+          "200": {
+            "description": "Normalized category content records with provenance"
+          }
         }
       }
     },

@@ -157,7 +157,7 @@ class ContentRecord(Base):
     subcategory = Column(String(64), nullable=True, index=True)
     content = Column(Text, nullable=False)
     content_type = Column(String(64), default="STRUCTURED_EXTRACTION")
-    country_code = Column(String(10), nullable=False, index=True)  # "US", "GB", "GLOBAL"
+    country_code = Column(String(10), nullable=True, index=True)  # "US", "GB", "GLOBAL", or None for universal
     region_code = Column(String(32), nullable=True)
     jurisdiction_scope = Column(String(32), default="COUNTRY", index=True)  # GLOBAL, COUNTRY, etc.
     language = Column(String(10), default="en", index=True)
@@ -259,3 +259,59 @@ class SourceHealth(Base):
     alert_status = Column(String(32), default="HEALTHY")
 
     source = relationship("Source", back_populates="health_records")
+
+
+class ConsensusFact(Base):
+    """
+    Pre-computed, ingestion-time atomic consensus clinical facts (e.g. symptoms, signs, risk factors).
+    Decoupled from jurisdiction; corroborated across multiple authoritative health bodies.
+    """
+    __tablename__ = "consensus_facts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    cancer_id = Column(String(36), ForeignKey("cancers.id"), nullable=False, index=True)
+    category = Column(String(64), nullable=False, index=True)  # e.g. "symptoms", "risk_factors"
+    fact_key = Column(String(128), nullable=False, index=True)  # e.g. "sym-breast-lump"
+    title = Column(String(512), nullable=False)  # The canonical sign/symptom title
+    clinical_detail = Column(Text, nullable=True)  # Clinical nuance, presentation characteristics
+    corroboration_count = Column(Integer, default=1)
+    display_order = Column(Integer, default=0)
+    active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    cancer = relationship("Cancer", backref="consensus_facts")
+    corroborating_sources = relationship(
+        "ConsensusFactSource",
+        back_populates="fact",
+        cascade="all, delete-orphan",
+        order_by="ConsensusFactSource.display_order",
+    )
+
+    __table_args__ = (
+        Index("ix_consensus_cancer_category", "cancer_id", "category"),
+    )
+
+
+class ConsensusFactSource(Base):
+    """
+    Direct multi-source citation and provenance link for a ConsensusFact.
+    Stores direct quote snippets, primary URLs, attribution text, and authority metadata.
+    """
+    __tablename__ = "consensus_fact_sources"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    consensus_fact_id = Column(String(36), ForeignKey("consensus_facts.id"), nullable=False, index=True)
+    source_id = Column(String(64), ForeignKey("sources.id"), nullable=False, index=True)
+    source_url = Column(String(1024), nullable=False)
+    quote_snippet = Column(Text, nullable=True)
+    attribution_text = Column(String(512), nullable=True)
+    country_code = Column(String(10), nullable=True, index=True)  # "US", "GB", "AU", "GLOBAL"
+    display_order = Column(Integer, default=0)
+    last_verified_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    fact = relationship("ConsensusFact", back_populates="corroborating_sources")
+    source = relationship("Source")
+

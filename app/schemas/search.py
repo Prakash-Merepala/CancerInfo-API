@@ -4,15 +4,16 @@ Search, Coverage, and Health Schemas
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from app.schemas.cancer import CancerSummaryOut
-from app.schemas.content import ContentRecordOut
+from app.schemas.content import ConsensusItemOut, ContentRecordOut
 
 
 class SearchResultItem(BaseModel):
-    match_type: str = Field(..., description="'cancer' or 'content_record'")
+    match_type: str = Field(..., description="'cancer', 'consensus_item', or 'content_record'")
     score: float = Field(default=1.0)
     cancer: CancerSummaryOut
     category: Optional[str] = None
     snippet: Optional[str] = None
+    consensus_item: Optional[ConsensusItemOut] = None
     record: Optional[ContentRecordOut] = None
     matched_terms: List[str] = Field(default_factory=list)
 

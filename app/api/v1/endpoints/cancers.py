@@ -5,8 +5,10 @@ import math
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from app.core.config import settings
-from app.core.constants import CANONICAL_CATEGORIES, CATEGORY_ALIASES
+from app.core.constants import (
+    CANONICAL_CATEGORIES,
+    get_category_nature,
+)
 from app.core.errors import CancerNotFoundError, CategoryNotFoundError
 from app.database.session import get_db
 from app.normalization.taxonomy import normalize_category
@@ -21,8 +23,11 @@ from app.schemas.cancer import (
 from app.schemas.common import MetaInfo, PaginationMeta, StandardResponse
 from app.schemas.content import (
     CancerCategoryDataOut,
+    ConsensusItemOut,
+    ConsensusSummaryOut,
     ContentRecordOut,
     ContentVersionOut,
+    CorroboratingSourceOut,
     JurisdictionOut,
     ProvenanceSourceOut,
 )
@@ -258,6 +263,71 @@ def get_cancer_category_content(
         raise CategoryNotFoundError(category)
 
     content_repo = ContentRepository(db)
+    cat_nature = get_category_nature(norm_category)
+    consensus_facts = content_repo.get_consensus_facts(cancer_obj.id, norm_category)
+
+    items_out: Optional[List[ConsensusItemOut]] = None
+    consensus_summary_out: Optional[ConsensusSummaryOut] = None
+
+    if consensus_facts:
+        items_out = []
+        all_sources = set()
+        user_country = country.strip().upper() if country else None
+
+        for cf in consensus_facts:
+            corrob_sources = []
+            matching_sources = []
+            other_sources = []
+
+            for s_link in cf.corroborating_sources:
+                s_obj = s_link.source
+                all_sources.add(s_obj.id)
+                c_out = CorroboratingSourceOut(
+                    source_id=s_obj.id,
+                    organization=s_obj.organization_name,
+                    authority_type=s_obj.authority_type,
+                    trust_tier=s_obj.trust_tier,
+                    country_code=s_link.country_code or s_obj.country_code,
+                    url=s_link.source_url,
+                    quote=s_link.quote_snippet,
+                    attribution_text=s_link.attribution_text or s_obj.attribution_text,
+                )
+                if user_country and (c_out.country_code == user_country or c_out.country_code == "GLOBAL"):
+                    matching_sources.append(c_out)
+                else:
+                    other_sources.append(c_out)
+
+            # Option A with user tag personalization:
+            # If user specifies country, prioritize matching country citations; keep all if none match
+            if user_country and matching_sources:
+                corrob_sources = matching_sources
+            else:
+                corrob_sources = matching_sources + other_sources
+
+            items_out.append(
+                ConsensusItemOut(
+                    id=cf.id,
+                    fact_key=cf.fact_key,
+                    sign=cf.title,
+                    clinical_detail=cf.clinical_detail,
+                    corroboration_count=cf.corroboration_count,
+                    corroborated_by=corrob_sources,
+                )
+            )
+
+        note_text = None
+        if user_country:
+            note_text = f"Biological presentations are universal across borders. Corroboration citations personalized for jurisdiction: {user_country}."
+
+        consensus_summary_out = ConsensusSummaryOut(
+            total_items=len(items_out),
+            consensus_status="VERIFIED_MULTI_AUTHORITY",
+            participating_sources=sorted(list(all_sources)),
+            note=note_text,
+        )
+
+    # Always fetch raw records for full backward compatibility
+    records_out: List[ContentRecordOut] = []
     skip = (page - 1) * limit
     records, total = content_repo.get_records(
         cancer_id=cancer_obj.id,
@@ -270,7 +340,6 @@ def get_cancer_category_content(
         limit=limit,
     )
 
-    records_out: List[ContentRecordOut] = []
     for r in records:
         sources_out = []
         for cs in r.sources:
@@ -291,6 +360,14 @@ def get_cancer_category_content(
                 )
             )
 
+        jurisdiction_out = None
+        if r.country_code:
+            jurisdiction_out = JurisdictionOut(
+                scope=r.jurisdiction_scope,
+                country=r.country_code,
+                region=r.region_code,
+            )
+
         records_out.append(
             ContentRecordOut(
                 id=r.id,
@@ -298,11 +375,7 @@ def get_cancer_category_content(
                 subcategory=r.subcategory,
                 content=r.content,
                 content_type=r.content_type,
-                jurisdiction=JurisdictionOut(
-                    scope=r.jurisdiction_scope,
-                    country=r.country_code,
-                    region=r.region_code,
-                ),
+                jurisdiction=jurisdiction_out,
                 language=r.language,
                 audience=r.audience,
                 disagreement_status=r.disagreement_status,
@@ -325,18 +398,23 @@ def get_cancer_category_content(
         category=norm_category,
         category_name=cat_meta["name"],
         category_description=cat_meta["description"],
+        category_type=cat_nature,
+        consensus_summary=consensus_summary_out,
+        items=items_out,
         records=records_out,
     )
 
-    total_pages = math.ceil(total / limit) if limit > 0 else 1
+    result_count = len(items_out) if items_out is not None else len(records_out)
+    total_records = len(items_out) if items_out is not None else total
+    total_pages = math.ceil(total_records / limit) if limit > 0 else 1
 
     return StandardResponse(
         data=category_data,
-        meta=MetaInfo(result_count=len(records_out)),
+        meta=MetaInfo(result_count=result_count),
         pagination=PaginationMeta(
             page=page,
             limit=limit,
-            total_records=total,
+            total_records=total_records,
             total_pages=total_pages,
             has_next=page < total_pages,
             has_prev=page > 1,

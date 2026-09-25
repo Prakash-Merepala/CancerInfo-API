@@ -136,7 +136,38 @@ CATEGORY_ALIASES: Dict[str, str] = {
     "stats": "statistics",
     "genes": "genetics",
 }
+BIOLOGICAL_CATEGORIES = frozenset(
+    {
+        "causes",
+        "risk_factors",
+        "biomarkers",
+        "genetics",
+        "symptoms",
+        "signs",
+        "diagnosis",
+        "diagnostic_tests",
+        "grading",
+        "staging",
+        "prognosis",
+        "survival",
+        "recurrence",
+    }
+)
 
+
+def get_category_nature(category: str) -> str:
+    """
+    Return the semantic nature of a canonical content category.
+
+    Biological categories describe disease presentation, mechanisms, or
+    clinical characteristics. All other categories are treated as general
+    informational content.
+    """
+    return (
+        "biological"
+        if category in BIOLOGICAL_CATEGORIES
+        else "informational"
+    )
 # Standard Country metadata
 COUNTRIES: Dict[str, Dict[str, str]] = {
     "US": {"code": "US", "name": "United States", "region": "Americas", "default_language": "en"},

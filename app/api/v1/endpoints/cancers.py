@@ -6,9 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.core.constants import (
-    BIOLOGICAL_CATEGORIES,
     CANONICAL_CATEGORIES,
-    CATEGORY_ALIASES,
     get_category_nature,
 )
 from app.core.errors import CancerNotFoundError, CategoryNotFoundError

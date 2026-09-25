@@ -6,15 +6,15 @@ services:
     container_name: cancerinfo_api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
-      - PORT=3000
-      - ENVIRONMENT=production
-      - DATABASE_URL=sqlite:///./cancerinfo.db
+      - PORT=${PORT:-3000}
+      - ENVIRONMENT=development
+      - DATABASE_URL=sqlite:////app/data/cancerinfo.db
     volumes:
       - cancerinfo_data:/app/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/v1/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:$${PORT:-3000}/v1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

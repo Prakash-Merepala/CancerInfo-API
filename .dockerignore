@@ -1,0 +1,38 @@
+# Git & CI/CD
+.git
+.github
+
+# Virtual Environments
+.venv
+venv
+env
+
+# Python Bytecode & Cache
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+*.pyd
+.coverage
+htmlcov
+
+# Node & Frontend Archives
+node_modules
+cancerinfo-explorer-ui/
+cancerinfo-explorer-ui.zip
+
+# Local SQLite databases
+cancerinfo.db
+*.db
+*.sqlite*
+
+# Environment & Local Secrets
+.env*
+!.env.example
+
+# Logs & Diagnostics
+*.log
+
+# Unit Tests & Local Scripts (not needed in production image)
+tests/
+scripts/

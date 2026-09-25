@@ -2,9 +2,9 @@ name: CI / Quality & Compliance Pipeline
 
 on:
   push:
-    branches: ["main", "master", "fix/CIAPI-L001-python-ci-runtime-cleanup"]
+    branches: ["main", "master", "fix/CIAPI-L*"]
   pull_request:
-    branches: ["main", "master"]
+    branches: ["main", "master", "launch_blockers"]
 
 jobs:
   test-and-verify:
@@ -41,14 +41,7 @@ jobs:
         run: |
           python -c "from app.main import app; import json; spec = app.openapi(); print(f'OpenAPI OK: {len(spec[\"paths\"])} routes generated successfully.')"
 
-      - name: Build Docker image
+      - name: Validate Docker container portability, endpoints & durability
         run: |
-          docker build -t cancerinfo-api:test .
-
-      - name: Verify Python version inside built Docker image
-        run: |
-          docker run --rm cancerinfo-api:test python --version
-
-      - name: Run OpenAPI import smoke test inside built Docker image
-        run: |
-          docker run --rm cancerinfo-api:test python -c "from app.main import app; spec = app.openapi(); print(f'Docker Container OpenAPI OK: {len(spec[\"paths\"])} paths')"
+          chmod +x scripts/validate_container.sh
+          ./scripts/validate_container.sh

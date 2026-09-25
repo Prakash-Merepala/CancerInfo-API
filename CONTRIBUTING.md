@@ -49,6 +49,7 @@ Before opening a pull request, ensure all CI validation gates pass locally:
 3. `DATABASE_URL=sqlite:////tmp/cancerinfo-tests.db python -m pytest tests/ -v -ra -W default` — Run the full existing suite and meaningful regression tests for the changed behavior.
 4. `python -c "from app.main import app; app.openapi()"` — OpenAPI 3.1 schema generates without error.
 5. `curl -f http://localhost:3000/health` — Local server health check returns 200 OK.
+6. `./scripts/validate_container.sh` — Docker container builds cleanly without baked state, boots on dynamic PORT, passes all endpoint checks, and verifies data durability across container recreation.
 
 ---
 

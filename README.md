@@ -10,7 +10,7 @@
 [![RapidAPI](https://img.shields.io/badge/RapidAPI-launch_planned-0052CC?style=for-the-badge&logo=rapidapi&logoColor=white)](rapidapi/RAPIDAPI_LISTING_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 [![Tests: pytest suite](https://img.shields.io/badge/pytest-passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#automated-testing)
-[![Docker](https://img.shields.io/badge/Docker-boot_validation_pending-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
+[![Docker](https://img.shields.io/badge/Docker-portable_%26_durable-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
 
 <p align="center">
   <b>Built with code. Powered by love. Serving humanity free of charge.</b><br>
@@ -130,7 +130,7 @@ for (const record of data.records) {
 }
 ```
 
-### 4. Container development path, verification pending
+### 4. Container Development (Docker Compose)
 
 ```bash
 git clone https://github.com/Prakash-Merepala/CancerInfo-API.git
@@ -138,7 +138,15 @@ cd CancerInfo-API
 docker compose up -d
 ```
 
-Visit `http://localhost:3000/docs` after the service starts. Docker build/boot was not run in this review. The current command hardcodes port 3000, and the compose volume does not cover the configured SQLite file. Correct persistence and verify restart/restore before production use.
+- **Dynamic Port:** Configured via `PORT` (default: `3000`). Example: `PORT=8080 docker compose up -d`.
+- **Durable Local Storage:** In development, SQLite data is stored at `/app/data/cancerinfo.db` backed by the named volume `cancerinfo_data`, persisting across container restarts and recreation.
+- **Production Database Contract:** In production, external PostgreSQL is required:
+  ```bash
+  ENVIRONMENT=production
+  DATABASE_URL=postgresql+psycopg2://<user>:<password>@<host>:<port>/<dbname>
+  ```
+  When using external PostgreSQL, no persistent local volume is needed. Container-local SQLite is strictly for development and validation. Never commit database credentials or connection secrets to Git.
+- **Automated Container Validation:** Run `./scripts/validate_container.sh` to test container builds, dynamic port binding, endpoint availability, and SQLite durability across container destruction and recreation.
 
 ---
 

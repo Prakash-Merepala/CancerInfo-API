@@ -166,3 +166,46 @@ python -c "from app.main import app; import json; spec = app.openapi(); print(f'
 ## Optional external tool (NOT required for API build/CI):
 # npx @stoplight/spectral-cli lint rapidapi/rapidapi-openapi.json
 ```
+
+---
+
+### 5. Container Portability & Persistence Validation (CIAPI-L002)
+
+Automated script:
+```bash
+./scripts/validate_container.sh
+```
+
+This automated test suite verifies:
+1. **Docker Image Build & Structure:**
+   - Image builds cleanly using Python 3.11-slim base.
+   - Mutable SQLite database (`/app/cancerinfo.db`) is **not** baked into the image.
+   - Development test files (`/app/tests`) are **not** packaged into the release image.
+   - Durable data mount point `/app/data` is created within the image.
+   - Python 3.11 runtime and OpenAPI spec generation succeed inside the built image.
+2. **Dynamic Runtime Port:**
+   - Container honors runtime `PORT` variable via `exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000}`.
+   - Default port (`3000`) boots and responds to all endpoints.
+   - Non-default port (`PORT=8081`) boots and responds to all endpoints.
+   - Clean signal handling is ensured by `exec` replacing the shell with uvicorn.
+3. **Core Endpoints Contract:**
+   - `/v1/health`: Returns HTTP 200 and healthy database connectivity status.
+   - `/v1/cancers`: Returns HTTP 200 with valid canonical cancer records.
+   - `/`: Returns HTTP 200 HTML portal or JSON metadata depending on `Accept` header.
+   - `/docs`: Returns HTTP 200 Swagger UI.
+   - `/redoc`: Returns HTTP 200 ReDoc UI.
+   - `/openapi.json`: Returns HTTP 200 OpenAPI 3.1 schema.
+4. **Data Durability Across Container Lifecycle:**
+   - Container A starts with named volume `cancerinfo_data` mounted at `/app/data` with `DATABASE_URL=sqlite:////app/data/cancerinfo.db`.
+   - A probe record is written to the database in Container A.
+   - Container A is stopped and removed (simulating crash or upgrade).
+   - Fresh Container B starts attached to the same volume.
+   - The probe record is verified to persist via both HTTP endpoint and direct database session.
+5. **Production Database Contract:**
+   - Production deployment requires external PostgreSQL via:
+     ```bash
+     ENVIRONMENT=production
+     DATABASE_URL=postgresql+psycopg2://<user>:<password>@<host>:<port>/<dbname>
+     ```
+   - No persistent container volume is needed when external PostgreSQL is used. Container-local SQLite is strictly for local development and validation. Production credentials must never be committed to Git.
+

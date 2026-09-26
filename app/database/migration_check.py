@@ -22,6 +22,14 @@ def get_alembic_config() -> Config:
     return cfg
 
 
+def set_alembic_url_safe(config: Config, url_str: str) -> None:
+    """
+    Sets 'sqlalchemy.url' in Alembic Config safely handling percent-encoded credentials
+    by escaping '%' as '%%' to prevent ConfigParser InterpolationSyntaxError.
+    """
+    config.set_main_option("sqlalchemy.url", url_str.replace("%", "%%"))
+
+
 def get_head_revision() -> str:
     """Return the expected Alembic head revision identifier."""
     cfg = get_alembic_config()

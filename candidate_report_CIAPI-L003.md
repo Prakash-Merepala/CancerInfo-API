@@ -3,6 +3,7 @@
 - **Repository:** `Prakash-Merepala/CancerInfo-API`
 - **Review Branch:** `CIAPI-L003-postgresql-migrations-controlled-initialization`
 - **Base Commit:** `7ae049310198b62d0b1812cad453471d403c65d3` (`origin/main`)
+- **Candidate Commit:** `5521bdbd2b88fe82190f27511b33f496663e9550`
 - **Status:** **Ready for Review (Candidate Refined)**
 
 ---

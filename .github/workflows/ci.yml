@@ -2,14 +2,29 @@ name: CI / Quality & Compliance Pipeline
 
 on:
   push:
-    branches: ["main", "master", "fix/CIAPI-L*"]
+    branches: ["main", "master", "fix/CIAPI-L*", "CIAPI-L*"]
   pull_request:
     branches: ["main", "master", "launch_blockers"]
 
 jobs:
   test-and-verify:
-    name: Python 3.11 Runtime, Quality & OpenAPI Validation
+    name: Python 3.11 Runtime, PostgreSQL Migrations & Container Validation
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: cancerinfo_user
+          POSTGRES_PASSWORD: cancerinfo_password
+          POSTGRES_DB: cancerinfo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Clean repository checkout
@@ -40,6 +55,30 @@ jobs:
       - name: Validate OpenAPI schema generation smoke test
         run: |
           python -c "from app.main import app; import json; spec = app.openapi(); print(f'OpenAPI OK: {len(spec[\"paths\"])} routes generated successfully.')"
+
+      - name: Validate PostgreSQL migrations and bootstrap against live PostgreSQL
+        env:
+          DATABASE_URL: postgresql+psycopg2://cancerinfo_user:cancerinfo_password@localhost:5432/cancerinfo_test
+        run: |
+          echo "=== 1. Upgrade PostgreSQL to Alembic Head ==="
+          alembic upgrade head
+
+          echo "=== 2. Verify Schema is at Head Revision ==="
+          python -c "from app.database.migration_check import verify_database_schema_at_head; from sqlalchemy import create_engine; import os; verify_database_schema_at_head(create_engine(os.environ['DATABASE_URL'])); print('Schema verified at Alembic Head.')"
+
+          echo "=== 3. Validate-Only Dry-Run Mode ==="
+          python scripts/bootstrap.py --validate-only
+
+          echo "=== 4. Execute Controlled Bootstrap ==="
+          python scripts/bootstrap.py
+
+          echo "=== 5. Verify Repeated Bootstrap Refusal ==="
+          if python scripts/bootstrap.py; then
+            echo "ERROR: Repeated bootstrap should have refused!"
+            exit 1
+          else
+            echo "Confirmed: Repeated bootstrap refused safely."
+          fi
 
       - name: Validate Docker container portability, endpoints & durability
         run: |

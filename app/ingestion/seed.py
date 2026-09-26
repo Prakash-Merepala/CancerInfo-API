@@ -19,7 +19,7 @@ from app.models import (
 from app.normalization.hash import compute_content_hash
 
 
-def seed_database(db: Session) -> None:
+def seed_database(db: Session, commit: bool = True) -> None:
     """
     Seeds the Source Registry, Canonical Cancers, initial verified content records,
     and pre-computed consensus facts. Idempotent.
@@ -28,7 +28,9 @@ def seed_database(db: Session) -> None:
         _seed_initial_core(db)
 
     if db.query(ConsensusFact).count() == 0:
-        seed_consensus_facts(db)
+        seed_consensus_facts(db, commit=commit)
+    elif commit:
+        db.commit()
 
 
 def _seed_initial_core(db: Session) -> None:
@@ -163,7 +165,7 @@ def _seed_initial_core(db: Session) -> None:
         )
         db.add(health)
 
-    db.commit()
+    db.flush()
 
     # 2. Seed Canonical Cancer Taxonomy
     cancers_data = [
@@ -275,7 +277,7 @@ def _seed_initial_core(db: Session) -> None:
                 )
             )
 
-    db.commit()
+    db.flush()
 
     # 3. Seed Verified Content Records with Full Fact-Level Provenance
     # Breast Cancer Seed Records
@@ -644,10 +646,10 @@ def _seed_initial_core(db: Session) -> None:
         )
         db.add(cv)
 
-    db.commit()
+    db.flush()
 
 
-def seed_consensus_facts(db: Session) -> None:
+def seed_consensus_facts(db: Session, commit: bool = True) -> None:
     """
     Seeds pre-computed atomic consensus items for universal biological categories (symptoms, etc.)
     with fact-level multi-source corroboration links.
@@ -1258,4 +1260,7 @@ def seed_consensus_facts(db: Session) -> None:
             )
             db.add(cfs)
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()

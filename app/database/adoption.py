@@ -125,6 +125,9 @@ def adopt_existing_schema(engine: Engine, dry_run: bool = False) -> Dict[str, An
     2. Verifies current Alembic status (refuses if already managed at head).
     3. Stamps database to head revision (unless dry_run=True).
     """
+    # Step 1: Verify Parity across all 11 tables
+    parity_result = verify_schema_parity(engine)
+
     current_rev = get_current_revision(engine)
     head_rev = get_head_revision()
 
@@ -133,12 +136,13 @@ def adopt_existing_schema(engine: Engine, dry_run: bool = False) -> Dict[str, An
             "status": "ALREADY_AT_HEAD",
             "current_revision": current_rev,
             "head_revision": head_rev,
-            "tables_verified": len(CURRENT_MODEL_TABLES),
-            "message": f"Database is already tracked by Alembic at head revision '{head_rev}'. No adoption needed.",
+            "tables_verified": parity_result["tables_verified"],
+            "message": (
+                f"Database is already tracked by Alembic at head revision '{head_rev}'. "
+                f"All {parity_result['tables_verified']} tables verified with 100% schema parity. "
+                "No adoption needed."
+            ),
         }
-
-    # Step 1: Verify Parity
-    parity_result = verify_schema_parity(engine)
 
     if dry_run:
         return {

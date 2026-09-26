@@ -52,9 +52,17 @@ jobs:
         run: |
           python -m pytest tests/ -v -ra -W default
 
+      - name: Prepare isolated PostgreSQL test database
+        run: |
+          until pg_isready -h localhost -p 5432 -U cancerinfo_user; do
+            echo "Waiting for PostgreSQL service container..."
+            sleep 1
+          done
+          PGPASSWORD=cancerinfo_password psql -h localhost -U cancerinfo_user -d cancerinfo_test -c "CREATE DATABASE cancerinfo_pytest;"
+
       - name: Run migration, bootstrap & legacy tests against live PostgreSQL
         env:
-          POSTGRES_TEST_URL: postgresql+psycopg2://cancerinfo_user:cancerinfo_password@localhost:5432/cancerinfo_test
+          POSTGRES_TEST_URL: postgresql+psycopg2://cancerinfo_user:cancerinfo_password@localhost:5432/cancerinfo_pytest
         run: |
           python -m pytest tests/test_migrations.py tests/test_bootstrap.py -v -ra -W default
 

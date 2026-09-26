@@ -36,7 +36,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.bootstrap import execute_bootstrap, inspect_database_state
 from app.database.legacy_audit import audit_legacy_cancer_content, compare_legacy_audits
-from app.database.manifest import capture_current_model_manifest, compare_current_model_manifests
+from app.database.manifest import (
+    capture_current_model_manifest,
+    compare_current_model_manifests,
+    verify_foreign_key_integrity,
+)
 from app.database.migration_check import get_alembic_config
 from app.models import (
     Cancer,
@@ -52,6 +56,43 @@ from app.models import (
 )
 
 
+def assert_safe_test_database(db_url: str) -> None:
+    """
+    Safeguard: Verifies that destructive test setup (schema dropping/wiping)
+    is NEVER run against an owner's Neon, production, or remote cloud database.
+    Only permitted on local SQLite or local/container PostgreSQL test instances.
+    """
+    if db_url.startswith("sqlite"):
+        return
+
+    from sqlalchemy.engine.url import make_url
+    url = make_url(db_url)
+    host = (url.host or "").lower()
+
+    # 1. Strictly forbid remote cloud databases
+    forbidden_cloud = ["neon.tech", "aws", "rds", "render.com", "azure", "supabase", "google"]
+    for pattern in forbidden_cloud:
+        if pattern in host:
+            raise RuntimeError(
+                f"DESTRUCTIVE SAFEGUARD BLOCKED: Test fixture targeted remote database '{host}'. "
+                f"Destructive schema resets are strictly forbidden on remote/cloud databases!"
+            )
+
+    # 2. Require host to be localhost / 127.0.0.1 / postgres container
+    allowed_hosts = ["localhost", "127.0.0.1", "postgres", ""]
+    if host not in allowed_hosts:
+        raise RuntimeError(
+            f"DESTRUCTIVE SAFEGUARD BLOCKED: Host '{host}' is not a local test host ({allowed_hosts})."
+        )
+
+    # 3. Require database name to contain 'test' or 'pytest'
+    dbname = (url.database or "").lower()
+    if "test" not in dbname and "pytest" not in dbname:
+        raise RuntimeError(
+            f"DESTRUCTIVE SAFEGUARD BLOCKED: Database name '{dbname}' does not contain 'test' or 'pytest'."
+        )
+
+
 def get_test_dialects():
     dialects = ["sqlite"]
     if os.getenv("POSTGRES_TEST_URL"):
@@ -65,6 +106,7 @@ def migrated_db(request, tmp_path):
     dialect = request.param
     if dialect == "postgres":
         pg_url = os.environ["POSTGRES_TEST_URL"]
+        assert_safe_test_database(pg_url)
         engine = create_engine(pg_url)
         with engine.begin() as conn:
             conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"))
@@ -213,12 +255,26 @@ def test_repeated_bootstrap_refuses_safely(migrated_db):
 
 
 def test_simulated_bootstrap_failure_rolls_back_completely(migrated_db):
-    """Test 6: A simulated bootstrap failure rolls back the complete transaction (0 records created)."""
-    with patch("app.database.bootstrap.seed_database", side_effect=RuntimeError("Simulated disk error")):
+    """
+    Test 6: A simulated bootstrap failure after actual database writes within
+    the transaction rolls back completely, leaving 0 records in all 11 tables.
+    """
+    from app.database import bootstrap as bs_mod
+    original_seed = bs_mod.seed_database
+
+    def failing_seed(session, commit=False):
+        # 1. Perform actual writes inside the transaction
+        original_seed(session, commit=False)
+        # Verify that records are staged in the active session transaction
+        assert len(session.new) > 0, "Expected staged records in session before simulated failure"
+        # 2. Simulate mid-transaction error after writes
+        raise RuntimeError("Simulated mid-transaction failure after actual database writes")
+
+    with patch("app.database.bootstrap.seed_database", side_effect=failing_seed):
         with pytest.raises(RuntimeError, match="Bootstrap transaction failed and was completely rolled back"):
             execute_bootstrap(migrated_db, dry_run=False)
 
-    # Verify complete rollback: zero current-model records exist
+    # Verify complete rollback: zero current-model records exist across ALL 11 tables
     state = inspect_database_state(migrated_db)
     assert state["total_current_model_rows"] == 0
     for tbl, count in state["current_model_counts"].items():
@@ -367,7 +423,7 @@ def test_starting_api_twice_in_production_mode_does_not_mutate_data(migrated_db)
     assert manifest_before["total_rows"] == 191
 
     # 3. Prepare subprocess script that boots API with environment variables set before import
-    db_url = str(migrated_db.url)
+    db_url = migrated_db.url.render_as_string(hide_password=False)
     is_postgres = db_url.startswith("postgresql")
 
     boot_script = """
@@ -429,3 +485,8 @@ print("BOOT_OK")
     # 4. Compare exact ordered manifests
     compare_current_model_manifests(manifest_before, manifest_after_1, "Baseline", "After-Start-1")
     compare_current_model_manifests(manifest_after_1, manifest_after_2, "After-Start-1", "After-Start-2")
+
+    # 5. Verify foreign-key integrity across all 11 tables
+    fk_result = verify_foreign_key_integrity(migrated_db)
+    assert fk_result["status"] == "VALID"
+    assert fk_result["violations"] == 0

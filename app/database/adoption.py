@@ -5,11 +5,16 @@ Safely adopts pre-existing current-model databases that were initialized
 without Alembic version tracking (e.g., via Base.metadata.create_all).
 
 Enforces:
-1. Strict schema parity check before any stamping operation.
-2. Verification that all 11 current-model tables exist.
-3. Column-level, type, and primary-key parity against Base.metadata.
-4. Refusal if tables are missing, drifted, or if database is unpopulated empty schema.
-5. Atomic stamping to head revision only after full parity is proven.
+1. Strict schema parity check before any stamping operation:
+   - All 11 current-model tables present
+   - Column-level presence, types, and nullability
+   - Primary key constraints
+   - Foreign key constraints (constrained columns, target table, target columns)
+   - Unique constraints and declared model indexes
+2. Refusal if database is already version-managed by Alembic (fail closed).
+3. Refusal if tables are missing, drifted, or if database is uninitialized empty schema.
+4. Preserves connection credentials internally (render_as_string without mask).
+5. Pinned atomic stamping specifically to BASELINE_REVISION.
 """
 from typing import Any, Dict, List, Tuple
 from alembic import command
@@ -23,6 +28,8 @@ from app.database.migration_check import (
 )
 from app.database.session import Base
 import app.models  # Ensures all 11 models are registered in Base.metadata
+
+BASELINE_REVISION = "0001_initial_schema"
 
 CURRENT_MODEL_TABLES = [
     "sources",
@@ -40,7 +47,7 @@ CURRENT_MODEL_TABLES = [
 
 
 class SchemaParityError(Exception):
-    """Raised when existing database schema does not match Base.metadata."""
+    """Raised when existing database schema does not match Base.metadata or is ineligible for adoption."""
     pass
 
 
@@ -48,9 +55,16 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
     """
     Verifies that the target database schema matches Base.metadata definitions
     across all 11 current-model tables.
+    Checks:
+    - Table presence (all 11 tables must exist)
+    - Column presence and nullability
+    - Column type compatibility (type affinity)
+    - Primary key constraints
+    - Foreign key constraints (constrained columns, referred table, referred columns)
+    - Index presence (all declared model indexes must be present in DB)
 
     Raises:
-        SchemaParityError: If tables are missing or columns/primary keys differ.
+        SchemaParityError: If tables are missing or columns/types/keys/indexes differ.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -71,7 +85,7 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
             f"Missing required tables: {missing_tables}. Cannot safely adopt drifted schema."
         )
 
-    # 3. Check column-level and primary-key parity for each table
+    # 3. Comprehensive column, type, nullability, PK, FK, and index parity
     discrepancies: List[str] = []
     table_reports: Dict[str, Any] = {}
 
@@ -81,17 +95,33 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
             discrepancies.append(f"Model definition missing in Base.metadata for table '{tbl_name}'")
             continue
 
-        model_columns = {c.name: c for c in model_table.columns}
-        db_columns = {c["name"]: c for c in inspector.get_columns(tbl_name)}
+        model_cols = {c.name: c for c in model_table.columns}
+        db_cols = {c["name"]: c for c in inspector.get_columns(tbl_name)}
 
-        # Check for missing columns in DB
-        missing_cols = set(model_columns.keys()) - set(db_columns.keys())
+        # A. Missing columns in DB
+        missing_cols = set(model_cols.keys()) - set(db_cols.keys())
         if missing_cols:
             discrepancies.append(
                 f"Table '{tbl_name}' is missing expected columns: {sorted(list(missing_cols))}"
             )
 
-        # Check primary key parity
+        # B. Column type affinity and nullability checks
+        for c_name, m_col in model_cols.items():
+            if c_name in db_cols:
+                d_col = db_cols[c_name]
+                m_aff = getattr(m_col.type, "_type_affinity", None)
+                d_aff = getattr(d_col["type"], "_type_affinity", None)
+                if m_aff is not None and d_aff is not None and m_aff != d_aff:
+                    discrepancies.append(
+                        f"Table '{tbl_name}.{c_name}' type mismatch: expected {m_aff}, found {d_aff}"
+                    )
+                if not m_col.primary_key:
+                    if not m_col.nullable and d_col["nullable"]:
+                        discrepancies.append(
+                            f"Table '{tbl_name}.{c_name}' nullability mismatch: expected NOT NULL, found NULLABLE"
+                        )
+
+        # C. Primary key parity
         db_pk = inspector.get_pk_constraint(tbl_name).get("constrained_columns", [])
         model_pk = [c.name for c in model_table.primary_key.columns]
         if set(db_pk) != set(model_pk):
@@ -99,9 +129,39 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
                 f"Table '{tbl_name}' primary key mismatch: expected {model_pk}, found {db_pk}"
             )
 
+        # D. Foreign key parity
+        db_fks = inspector.get_foreign_keys(tbl_name)
+        for fk in model_table.foreign_key_constraints:
+            m_constrained = set([col.name for col in fk.columns])
+            m_ref_tbl = fk.referred_table.name
+            m_ref_cols = set([elem.column.name for elem in fk.elements])
+            match = False
+            for d_fk in db_fks:
+                if set(d_fk["constrained_columns"]) == m_constrained and d_fk["referred_table"] == m_ref_tbl:
+                    if not d_fk.get("referred_columns") or set(d_fk["referred_columns"]) == m_ref_cols:
+                        match = True
+                        break
+            if not match:
+                discrepancies.append(
+                    f"Table '{tbl_name}' missing foreign key constraint on columns {sorted(list(m_constrained))} "
+                    f"referencing {m_ref_tbl}({sorted(list(m_ref_cols))})"
+                )
+
+        # E. Index parity
+        db_indexes = inspector.get_indexes(tbl_name)
+        db_idx_cols = [tuple(idx["column_names"]) for idx in db_indexes if idx.get("column_names")]
+        for m_idx in model_table.indexes:
+            m_cols = tuple([c.name for c in m_idx.columns])
+            if m_cols not in db_idx_cols:
+                discrepancies.append(
+                    f"Table '{tbl_name}' missing declared index covering columns {m_cols}"
+                )
+
         table_reports[tbl_name] = {
-            "columns_verified": len(db_columns),
+            "columns_verified": len(db_cols),
             "primary_key": db_pk,
+            "foreign_keys_verified": len(db_fks),
+            "indexes_verified": len(db_indexes),
         }
 
     if discrepancies:
@@ -119,54 +179,53 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
 
 def adopt_existing_schema(engine: Engine, dry_run: bool = False) -> Dict[str, Any]:
     """
-    Safely adopts pre-Alembic database into Alembic version control.
+    Safely adopts an unversioned pre-Alembic database into Alembic version control.
 
-    1. Verifies complete schema parity across all 11 tables.
-    2. Verifies current Alembic status (refuses if already managed at head).
-    3. Stamps database to head revision (unless dry_run=True).
+    1. Refuses if database is already managed by Alembic at any revision (fail closed).
+    2. Verifies complete schema parity across all 11 tables (types, nullability, PKs, FKs, indexes).
+    3. Stamps database explicitly to BASELINE_REVISION ('0001_initial_schema').
     """
+    current_rev = get_current_revision(engine)
+
+    # Fail closed: reject already-versioned databases
+    if current_rev is not None:
+        raise SchemaParityError(
+            f"Adoption rejected: Database is already managed by Alembic at revision '{current_rev}'. "
+            f"Schema adoption is strictly reserved for unversioned baseline databases without an 'alembic_version' table. "
+            f"Use 'alembic upgrade head' to apply migrations."
+        )
+
     # Step 1: Verify Parity across all 11 tables
     parity_result = verify_schema_parity(engine)
-
-    current_rev = get_current_revision(engine)
-    head_rev = get_head_revision()
-
-    if current_rev == head_rev and head_rev is not None:
-        return {
-            "status": "ALREADY_AT_HEAD",
-            "current_revision": current_rev,
-            "head_revision": head_rev,
-            "tables_verified": parity_result["tables_verified"],
-            "message": (
-                f"Database is already tracked by Alembic at head revision '{head_rev}'. "
-                f"All {parity_result['tables_verified']} tables verified with 100% schema parity. "
-                "No adoption needed."
-            ),
-        }
 
     if dry_run:
         return {
             "status": "PARITY_VERIFIED_DRY_RUN",
-            "current_revision": current_rev,
-            "head_revision": head_rev,
+            "current_revision": None,
+            "target_baseline_revision": BASELINE_REVISION,
             "tables_verified": parity_result["tables_verified"],
-            "message": f"Schema parity confirmed for all {parity_result['tables_verified']} tables. Ready for 'alembic stamp head'.",
+            "message": (
+                f"Schema parity confirmed for all {parity_result['tables_verified']} tables. "
+                f"Ready to safely adopt unversioned database by stamping to baseline revision '{BASELINE_REVISION}'."
+            ),
         }
 
-    # Step 2: Stamp to Head
+    # Step 2: Stamp explicitly to pinned BASELINE_REVISION
     cfg = get_alembic_config()
-    cfg.set_main_option("sqlalchemy.url", str(engine.url))
-    command.stamp(cfg, "head")
+    # Preserve credentials internally without masking
+    raw_url = engine.url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", raw_url)
+    command.stamp(cfg, BASELINE_REVISION)
 
     post_rev = get_current_revision(engine)
-    if post_rev != head_rev:
+    if post_rev != BASELINE_REVISION:
         raise RuntimeError(
-            f"Adoption stamping failed: expected head '{head_rev}', found '{post_rev}'"
+            f"Adoption stamping failed: expected baseline revision '{BASELINE_REVISION}', found '{post_rev}'"
         )
 
     return {
         "status": "SUCCESSFULLY_ADOPTED",
         "adopted_revision": post_rev,
         "tables_verified": parity_result["tables_verified"],
-        "message": f"Database successfully adopted into Alembic at head revision '{post_rev}' without table mutation.",
+        "message": f"Database successfully adopted into Alembic at baseline revision '{post_rev}' without table mutation.",
     }

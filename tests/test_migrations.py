@@ -53,6 +53,43 @@ from app.database.migration_check import (
 from app.database.session import Base
 
 
+def assert_safe_test_database(db_url: str) -> None:
+    """
+    Safeguard: Verifies that destructive test setup (schema dropping/wiping)
+    is NEVER run against an owner's Neon, production, or remote cloud database.
+    Only permitted on local SQLite or local/container PostgreSQL test instances.
+    """
+    if db_url.startswith("sqlite"):
+        return
+
+    from sqlalchemy.engine.url import make_url
+    url = make_url(db_url)
+    host = (url.host or "").lower()
+
+    # 1. Strictly forbid remote cloud databases
+    forbidden_cloud = ["neon.tech", "aws", "rds", "render.com", "azure", "supabase", "google"]
+    for pattern in forbidden_cloud:
+        if pattern in host:
+            raise RuntimeError(
+                f"DESTRUCTIVE SAFEGUARD BLOCKED: Test fixture targeted remote database '{host}'. "
+                f"Destructive schema resets are strictly forbidden on remote/cloud databases!"
+            )
+
+    # 2. Require host to be localhost / 127.0.0.1 / postgres container
+    allowed_hosts = ["localhost", "127.0.0.1", "postgres", ""]
+    if host not in allowed_hosts:
+        raise RuntimeError(
+            f"DESTRUCTIVE SAFEGUARD BLOCKED: Host '{host}' is not a local test host ({allowed_hosts})."
+        )
+
+    # 3. Require database name to contain 'test' or 'pytest'
+    dbname = (url.database or "").lower()
+    if "test" not in dbname and "pytest" not in dbname:
+        raise RuntimeError(
+            f"DESTRUCTIVE SAFEGUARD BLOCKED: Database name '{dbname}' does not contain 'test' or 'pytest'."
+        )
+
+
 def get_test_dialects():
     """Return supported dialects. Includes 'postgres' when POSTGRES_TEST_URL is provided."""
     dialects = ["sqlite"]
@@ -67,6 +104,7 @@ def test_db_url(request, tmp_path):
     dialect = request.param
     if dialect == "postgres":
         pg_url = os.environ["POSTGRES_TEST_URL"]
+        assert_safe_test_database(pg_url)
         # Wipe public schema in PostgreSQL to guarantee clean, isolated database
         engine = create_engine(pg_url)
         with engine.begin() as conn:
@@ -418,7 +456,11 @@ def test_pre_alembic_schema_adoption_with_parity_verification(test_db_url, alemb
     head_rev = verify_database_schema_at_head(engine)
     assert head_rev == "0001_initial_schema"
 
-    # 8. Test parity failure on drifted schema: create separate database missing a table
+    # 8. Test fail-closed rejection: attempting to adopt an already-managed database MUST raise SchemaParityError
+    with pytest.raises(SchemaParityError, match="Adoption rejected: Database is already managed by Alembic"):
+        adopt_existing_schema(engine, dry_run=False)
+
+    # 9. Test parity failure on drifted schema: create separate database missing a table
     drift_db_file = test_db_url + "_drift.db" if test_db_url.startswith("sqlite") else None
     if drift_db_file:
         drift_engine = create_engine(drift_db_file)
@@ -429,14 +471,14 @@ def test_pre_alembic_schema_adoption_with_parity_verification(test_db_url, alemb
         assert get_current_revision(drift_engine) is None
 
 
-def test_migration_failure_and_recovery(test_db_url, alembic_cfg):
+def test_migration_failure_and_recovery(test_db_url, alembic_cfg, tmp_path):
     """
     Test 11: Controlled migration failure test.
-    1. Causes controlled migration failure via faulty migration step.
-    2. Proves failing process result.
-    3. Proves application refuses to start.
-    4. Verifies database revision is not at head and data state is intact.
-    5. Demonstrates recovery / restore, followed by clean application startup.
+    1. Causes controlled migration failure via faulty migration step in an isolated directory.
+    2. Proves failing command result.
+    3. Proves database revision is not at failed revision and data state is intact.
+    4. Demonstrates recovery, followed by clean application startup.
+    Keeps temporary faulty revisions completely isolated from repository migrations.
     """
     engine = create_engine(test_db_url)
 
@@ -444,9 +486,10 @@ def test_migration_failure_and_recovery(test_db_url, alembic_cfg):
     command.upgrade(alembic_cfg, "head")
     assert get_current_revision(engine) == "0001_initial_schema"
 
-    # 2. Inject a controlled faulty migration revision
-    project_root = Path(__file__).resolve().parent.parent
-    faulty_rev_file = project_root / "alembic" / "versions" / "9999_faulty_test_revision.py"
+    # 2. Inject a controlled faulty migration revision into an isolated temporary directory
+    tmp_versions_dir = tmp_path / "faulty_versions"
+    tmp_versions_dir.mkdir(parents=True, exist_ok=True)
+    faulty_rev_file = tmp_versions_dir / "9999_faulty_test_revision.py"
     faulty_rev_content = '''"""faulty_test_revision"""
 revision = '9999_faulty'
 down_revision = '0001_initial_schema'
@@ -464,32 +507,32 @@ def upgrade():
 def downgrade():
     op.drop_table("faulty_probe_table")
 '''
-    try:
-        faulty_rev_file.write_text(faulty_rev_content)
+    faulty_rev_file.write_text(faulty_rev_content)
 
-        # 3. Attempt upgrade to head - must fail
-        with pytest.raises(Exception):
-            command.upgrade(alembic_cfg, "head")
+    project_root = Path(__file__).resolve().parent.parent
+    real_versions = project_root / "alembic" / "versions"
 
-        # 4. Prove database revision is NOT at the target failed revision
-        curr_rev = get_current_revision(engine)
-        assert curr_rev != "9999_faulty"
+    # Configure version_locations to include the temporary isolated folder
+    alembic_cfg.set_section_option("alembic", "version_path_separator", ":")
+    alembic_cfg.set_section_option("alembic", "version_locations", f"{real_versions}:{tmp_versions_dir}")
 
-        # 5. Prove API startup fails due to revision mismatch
-        with pytest.raises(RuntimeError, match="Database schema validation failed"):
-            verify_database_schema_at_head(engine)
+    # 3. Attempt upgrade to head - must fail
+    with pytest.raises(Exception):
+        command.upgrade(alembic_cfg, "head")
 
-        # 6. Prove existing tables and baseline data remain uncorrupted
-        inspector = inspect(engine)
-        assert "sources" in inspector.get_table_names()
-        assert "cancers" in inspector.get_table_names()
+    # 4. Prove database revision is NOT at the target failed revision
+    curr_rev = get_current_revision(engine)
+    assert curr_rev != "9999_faulty"
 
-    finally:
-        # 7. Recovery: remove faulty revision
-        if faulty_rev_file.exists():
-            faulty_rev_file.unlink()
+    # 5. Prove existing tables and baseline data remain uncorrupted
+    inspector = inspect(engine)
+    assert "sources" in inspector.get_table_names()
+    assert "cancers" in inspector.get_table_names()
 
-    # 8. Post-recovery: head revision is once again 0001_initial_schema
+    # 6. Recovery: remove isolated temporary folder and reset version_locations
+    alembic_cfg.set_section_option("alembic", "version_locations", str(real_versions))
+
+    # 7. Post-recovery: head revision is once again 0001_initial_schema and startup check passes
     recovered_head = verify_database_schema_at_head(engine)
     assert recovered_head == "0001_initial_schema"
 

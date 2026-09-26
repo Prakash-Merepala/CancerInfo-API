@@ -8,7 +8,7 @@ bootstrap operations, or application restarts.
 """
 import hashlib
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -111,17 +111,23 @@ def audit_legacy_cancer_content(engine: Engine) -> Dict[str, Any]:
         pk_rows = conn.execute(text("SELECT id FROM cancer_content ORDER BY id")).fetchall()
         pk_set = [r[0] for r in pk_rows]
 
-        # Exact ordered tuples of (id, content_id, content_hash, scraped_at)
+        # Exact ordered records across ALL 22 legacy columns
+        cols_sql = ", ".join(EXPECTED_LEGACY_COLUMNS)
         tuple_rows = conn.execute(
-            text("SELECT id, content_id, content_hash, scraped_at FROM cancer_content ORDER BY id")
+            text(f"SELECT {cols_sql} FROM cancer_content ORDER BY id")
         ).fetchall()
 
         ordered_tuples: List[List[Any]] = []
         for r in tuple_rows:
-            scraped_str = r[3].isoformat() if isinstance(r[3], datetime) else (str(r[3]) if r[3] is not None else None)
-            ordered_tuples.append([r[0], r[1], r[2], scraped_str])
+            row_vals = []
+            for val in r:
+                if isinstance(val, (datetime, date)):
+                    row_vals.append(val.isoformat())
+                else:
+                    row_vals.append(val)
+            ordered_tuples.append(row_vals)
 
-    # 5. Deterministic digest of tuples
+    # 5. Deterministic digest of all rows across all 22 columns
     serialized = json.dumps(ordered_tuples, sort_keys=True)
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -156,6 +162,9 @@ def compare_legacy_audits(pre_audit: Dict[str, Any], post_audit: Dict[str, Any])
     )
     assert pre_audit["primary_key_columns"] == post_audit["primary_key_columns"], (
         "Legacy primary key definition was modified!"
+    )
+    assert pre_audit["indexes"] == post_audit["indexes"], (
+        f"Legacy index definitions were modified! Pre: {pre_audit['indexes']} vs Post: {post_audit['indexes']}"
     )
     assert pre_audit["row_count"] == post_audit["row_count"], (
         f"Legacy row count changed from {pre_audit['row_count']} to {post_audit['row_count']}!"

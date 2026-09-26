@@ -123,3 +123,54 @@ def compare_current_model_manifests(
     assert manifest_a["deterministic_digest"] == manifest_b["deterministic_digest"], (
         f"Manifest digest mismatch! {label_a}={manifest_a['deterministic_digest']} vs {label_b}={manifest_b['deterministic_digest']}"
     )
+
+
+def verify_foreign_key_integrity(engine: Engine) -> Dict[str, Any]:
+    """
+    Verifies foreign-key integrity across all 11 current-model tables.
+    Asserts that zero orphaned foreign-key references exist in the database.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    fks_checked = 0
+    violations: List[str] = []
+
+    with engine.connect() as conn:
+        for tbl in CURRENT_MODEL_TABLES:
+            if tbl not in existing_tables:
+                continue
+            for fk in inspector.get_foreign_keys(tbl):
+                fks_checked += 1
+                child_cols = fk["constrained_columns"]
+                parent_tbl = fk["referred_table"]
+                parent_cols = fk.get("referred_columns") or ["id"]
+                if not child_cols or not parent_cols or len(child_cols) != len(parent_cols):
+                    continue
+                if parent_tbl not in existing_tables:
+                    continue
+
+                join_conditions = " AND ".join(
+                    f"c.{c_col} = p.{p_col}" for c_col, p_col in zip(child_cols, parent_cols)
+                )
+                not_null_cond = " AND ".join(f"c.{c_col} IS NOT NULL" for c_col in child_cols)
+                query = text(f"""
+                    SELECT COUNT(*) FROM {tbl} c
+                    WHERE {not_null_cond}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {parent_tbl} p WHERE {join_conditions}
+                      )
+                """)
+                orphan_count = conn.execute(query).scalar() or 0
+                if orphan_count > 0:
+                    violations.append(
+                        f"Table '{tbl}' has {orphan_count} orphan row(s) referencing missing parent in '{parent_tbl}' on {child_cols} -> {parent_cols}"
+                    )
+
+    if violations:
+        raise AssertionError("Foreign-key integrity check failed:\n  - " + "\n  - ".join(violations))
+
+    return {
+        "status": "VALID",
+        "foreign_keys_checked": fks_checked,
+        "violations": 0,
+    }

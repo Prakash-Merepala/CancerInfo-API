@@ -46,9 +46,6 @@ Examples:
 
   # Execute one-transaction bootstrap against active database:
   python scripts/bootstrap.py
-
-  # Force bootstrap on already-populated database (use with extreme care):
-  python scripts/bootstrap.py --force
 """,
     )
     parser.add_argument(
@@ -57,11 +54,6 @@ Examples:
         dest="dry_run",
         action="store_true",
         help="Inspect database state and report readiness without creating or mutating any records.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force execution even if current-model tables are already populated.",
     )
 
     args = parser.parse_args()
@@ -76,7 +68,7 @@ Examples:
     print("-" * 70)
 
     try:
-        result = execute_bootstrap(engine, force=args.force, dry_run=args.dry_run)
+        result = execute_bootstrap(engine, dry_run=args.dry_run)
     except Exception as exc:
         print(f"\n[BOOTSTRAP ERROR] {exc}", file=sys.stderr)
         sys.exit(1)

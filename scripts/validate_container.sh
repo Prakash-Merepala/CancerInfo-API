@@ -88,9 +88,9 @@ if docker run --rm "$IMAGE_NAME" sh -c "test -d /app/tests"; then
 fi
 echo "PASSED (not present in image)."
 
-# D: Verify Alembic migrations and bootstrap CLI are packaged into image
-echo -n "  - Checking presence of Alembic migrations and bootstrap CLI... "
-docker run --rm "$IMAGE_NAME" sh -c "test -d /app/alembic && test -f /app/alembic.ini && test -f /app/scripts/bootstrap.py"
+# D: Verify Alembic migrations, bootstrap CLI, and schema adoption CLI are packaged into image
+echo -n "  - Checking presence of Alembic migrations, bootstrap, and adoption CLI... "
+docker run --rm "$IMAGE_NAME" sh -c "test -d /app/alembic && test -f /app/alembic.ini && test -f /app/scripts/bootstrap.py && test -f /app/scripts/adopt_existing_schema.py"
 echo "PASSED."
 
 # E: Verify Python 3.11 runtime inside image

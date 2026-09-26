@@ -48,31 +48,40 @@ jobs:
         run: |
           python -m pip check
 
-      - name: Run pytest test suite with warnings visible
+      - name: Run pytest test suite (SQLite coverage)
         run: |
           python -m pytest tests/ -v -ra -W default
+
+      - name: Run migration, bootstrap & legacy tests against live PostgreSQL
+        env:
+          POSTGRES_TEST_URL: postgresql+psycopg2://cancerinfo_user:cancerinfo_password@localhost:5432/cancerinfo_test
+        run: |
+          python -m pytest tests/test_migrations.py tests/test_bootstrap.py -v -ra -W default
 
       - name: Validate OpenAPI schema generation smoke test
         run: |
           python -c "from app.main import app; import json; spec = app.openapi(); print(f'OpenAPI OK: {len(spec[\"paths\"])} routes generated successfully.')"
 
-      - name: Validate PostgreSQL migrations and bootstrap against live PostgreSQL
+      - name: Validate PostgreSQL migrations, drift check, and bootstrap CLI
         env:
           DATABASE_URL: postgresql+psycopg2://cancerinfo_user:cancerinfo_password@localhost:5432/cancerinfo_test
         run: |
           echo "=== 1. Upgrade PostgreSQL to Alembic Head ==="
           alembic upgrade head
 
-          echo "=== 2. Verify Schema is at Head Revision ==="
+          echo "=== 2. Automated Model-to-Migration Drift Check ==="
+          alembic check
+
+          echo "=== 3. Verify Schema is at Head Revision ==="
           python -c "from app.database.migration_check import verify_database_schema_at_head; from sqlalchemy import create_engine; import os; verify_database_schema_at_head(create_engine(os.environ['DATABASE_URL'])); print('Schema verified at Alembic Head.')"
 
-          echo "=== 3. Validate-Only Dry-Run Mode ==="
+          echo "=== 4. Validate-Only Dry-Run Mode ==="
           python scripts/bootstrap.py --validate-only
 
-          echo "=== 4. Execute Controlled Bootstrap ==="
+          echo "=== 5. Execute Controlled Bootstrap ==="
           python scripts/bootstrap.py
 
-          echo "=== 5. Verify Repeated Bootstrap Refusal ==="
+          echo "=== 6. Verify Repeated Bootstrap Refusal ==="
           if python scripts/bootstrap.py; then
             echo "ERROR: Repeated bootstrap should have refused!"
             exit 1

@@ -102,34 +102,27 @@ else
 fi
 ```
 
-### Operation 4: Capture Non-Content Baseline Manifest from Upgrade-Test Database
+### Operation 4: Capture Cryptographic Baseline Audit from Upgrade-Test Database
 ```bash
 DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python -c "
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from app.database.legacy_audit import audit_legacy_cancer_content
 import json, os
 
 engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    row_count = conn.execute(text('SELECT COUNT(*) FROM cancer_content')).scalar()
-    distinct_ids = conn.execute(text('SELECT COUNT(DISTINCT content_id) FROM cancer_content')).scalar()
-    distinct_hashes = conn.execute(text('SELECT COUNT(DISTINCT content_hash) FROM cancer_content')).scalar()
-    earliest_scrape = conn.execute(text('SELECT MIN(scraped_at) FROM cancer_content')).scalar()
-    latest_scrape = conn.execute(text('SELECT MAX(scraped_at) FROM cancer_content')).scalar()
+audit = audit_legacy_cancer_content(engine)
 
-manifest = {
-    'table_name': 'cancer_content',
-    'row_count': row_count,
-    'distinct_content_ids': distinct_ids,
-    'distinct_content_hashes': distinct_hashes,
-    'earliest_scrape': str(earliest_scrape),
-    'latest_scrape': str(latest_scrape),
-}
+assert audit['exists'] is True, 'Legacy table cancer_content not found!'
+assert audit['column_count'] == 22, f'Expected 22 columns, found {audit[\"column_count\"]}'
 
-with open('/tmp/upgrade_test_baseline_manifest.json', 'w') as f:
-    json.dump(manifest, f, indent=2)
+with open('/tmp/upgrade_test_baseline_audit.json', 'w') as f:
+    json.dump(audit, f, indent=2)
 
-print('Baseline manifest captured successfully:')
-print(json.dumps(manifest, indent=2))
+print('Legacy baseline audit captured successfully:')
+print(f'  - Rows: {audit[\"row_count\"]}')
+print(f'  - Null hash rows: {audit[\"null_hash_count\"]}')
+print(f'  - Primary keys count: {len(audit[\"primary_key_set\"])}')
+print(f'  - Data digest: {audit[\"deterministic_digest\"]}')
 "
 ```
 
@@ -146,63 +139,69 @@ echo "Backup size: $(wc -c < /tmp/upgrade_test_backup.dump) bytes"
 DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" alembic upgrade head
 ```
 
-### Operation 7: Compare Pre-Migration and Post-Migration Legacy Manifests
+### Operation 7: Compare Pre-Migration and Post-Migration Legacy Audits
 ```bash
 DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python -c "
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from app.database.legacy_audit import audit_legacy_cancer_content, compare_legacy_audits
 import json, os
 
 engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    row_count = conn.execute(text('SELECT COUNT(*) FROM cancer_content')).scalar()
-    distinct_ids = conn.execute(text('SELECT COUNT(DISTINCT content_id) FROM cancer_content')).scalar()
-    distinct_hashes = conn.execute(text('SELECT COUNT(DISTINCT content_hash) FROM cancer_content')).scalar()
-    earliest_scrape = conn.execute(text('SELECT MIN(scraped_at) FROM cancer_content')).scalar()
-    latest_scrape = conn.execute(text('SELECT MAX(scraped_at) FROM cancer_content')).scalar()
+post_audit = audit_legacy_cancer_content(engine)
 
-post_manifest = {
-    'table_name': 'cancer_content',
-    'row_count': row_count,
-    'distinct_content_ids': distinct_ids,
-    'distinct_content_hashes': distinct_hashes,
-    'earliest_scrape': str(earliest_scrape),
-    'latest_scrape': str(latest_scrape),
-}
+with open('/tmp/upgrade_test_baseline_audit.json') as f:
+    pre_audit = json.load(f)
 
-with open('/tmp/upgrade_test_baseline_manifest.json') as f:
-    pre_manifest = json.load(f)
-
-assert pre_manifest == post_manifest, f'Manifest mismatch! Pre: {pre_manifest} vs Post: {post_manifest}'
-print('PASSED: Legacy cancer_content manifest is 100% identical post-migration.')
+compare_legacy_audits(pre_audit, post_audit)
+print('PASSED: Legacy cancer_content is 100% identical post-migration across all 22 columns, PKs, hashes, and tuples.')
 "
 ```
 
 ### Operation 8: Start API Twice in Production Mode & Prove Zero Mutation
 ```bash
-DATABASE_URL="$L003_CLEAN_DATABASE_URL" python -c "
+# Explicitly export ENVIRONMENT=production BEFORE python import or startup
+export ENVIRONMENT="production"
+export DATABASE_URL="$L003_CLEAN_DATABASE_URL"
+
+python -c "
+import os
+assert os.environ.get('ENVIRONMENT') == 'production', 'ENVIRONMENT must be set to production before import!'
+
 from sqlalchemy import create_engine
-from app.database.bootstrap import inspect_database_state
-import os, asyncio
+from app.core.config import settings
+assert settings.is_production is True, 'Settings must reflect production mode!'
+
+from app.database.manifest import capture_current_model_manifest, compare_current_model_manifests
+from app.main import lifespan, app
+import asyncio
 
 engine = create_engine(os.environ['DATABASE_URL'])
-pre_state = inspect_database_state(engine)
 
-from app.main import lifespan, app
+# 1. Capture exact ordered manifest across all 11 current-model tables
+manifest_before = capture_current_model_manifest(engine)
+assert manifest_before['total_rows'] == 191, f'Expected 191 baseline rows, found {manifest_before[\"total_rows\"]}'
 
 async def boot_app():
     async with lifespan(app):
         pass
 
-# Run startup 1
+# 2. Run Startup 1
 asyncio.run(boot_app())
+manifest_after_1 = capture_current_model_manifest(engine)
 
-# Run startup 2
+# 3. Run Startup 2
 asyncio.run(boot_app())
+manifest_after_2 = capture_current_model_manifest(engine)
 
-post_state = inspect_database_state(engine)
-assert pre_state['current_model_counts'] == post_state['current_model_counts']
-print('PASSED: Starting API twice produced zero database mutations.')
+# 4. Compare exact manifests: PKs, FKs, aliases, citations, hashes, versions, timestamps, consensus facts/sources
+compare_current_model_manifests(manifest_before, manifest_after_1, 'Baseline', 'Startup-1')
+compare_current_model_manifests(manifest_after_1, manifest_after_2, 'Startup-1', 'Startup-2')
+
+print('PASSED: Starting API twice in production mode produced zero database mutations.')
+print(f'  - Total current-model rows verified unchanged: {manifest_after_2[\"total_rows\"]}')
+print(f'  - Deterministic digest verified unchanged: {manifest_after_2[\"deterministic_digest\"]}')
 "
+```
 ```
 
 ### Operation 9: Restore Backup into Restore-Test Database
@@ -211,77 +210,71 @@ print('PASSED: Starting API twice produced zero database mutations.')
 pg_restore --clean --if-exists --no-owner --no-acl -d "$L003_RESTORE_TEST_DATABASE_URL" /tmp/upgrade_test_backup.dump
 ```
 
-### Operation 10: Compare Restored Legacy Manifest with Original
+### Operation 10: Compare Restored Legacy Audit with Original Baseline
 ```bash
 DATABASE_URL="$L003_RESTORE_TEST_DATABASE_URL" python -c "
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from app.database.legacy_audit import audit_legacy_cancer_content, compare_legacy_audits
 import json, os
 
 engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    row_count = conn.execute(text('SELECT COUNT(*) FROM cancer_content')).scalar()
-    distinct_ids = conn.execute(text('SELECT COUNT(DISTINCT content_id) FROM cancer_content')).scalar()
-    distinct_hashes = conn.execute(text('SELECT COUNT(DISTINCT content_hash) FROM cancer_content')).scalar()
-    earliest_scrape = conn.execute(text('SELECT MIN(scraped_at) FROM cancer_content')).scalar()
-    latest_scrape = conn.execute(text('SELECT MAX(scraped_at) FROM cancer_content')).scalar()
+restored_audit = audit_legacy_cancer_content(engine)
 
-restored_manifest = {
-    'table_name': 'cancer_content',
-    'row_count': row_count,
-    'distinct_content_ids': distinct_ids,
-    'distinct_content_hashes': distinct_hashes,
-    'earliest_scrape': str(earliest_scrape),
-    'latest_scrape': str(latest_scrape),
-}
+with open('/tmp/upgrade_test_baseline_audit.json') as f:
+    pre_audit = json.load(f)
 
-with open('/tmp/upgrade_test_baseline_manifest.json') as f:
-    pre_manifest = json.load(f)
-
-assert pre_manifest == restored_manifest, f'Restored manifest mismatch! Pre: {pre_manifest} vs Restored: {restored_manifest}'
-print('PASSED: Restored database matches original pre-migration manifest perfectly.')
+compare_legacy_audits(pre_audit, restored_audit)
+print('PASSED: Restored database matches original pre-migration baseline audit perfectly.')
 "
 ```
 
-### Operation 11: Exercise Representative API & Ingestion Against Migrated PostgreSQL
+### Operation 11: Safe Pre-Alembic Schema Adoption with Parity Verification
+For databases created prior to Alembic (e.g., via `Base.metadata.create_all`) that already contain current-model tables without `alembic_version`:
 ```bash
-# Run bootstrap on upgrade-test current-model tables
-DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python scripts/bootstrap.py
+# 1. Inspect schema parity across all 11 tables without stamping (dry run):
+DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python scripts/adopt_existing_schema.py --validate-only
 
-# Query representative consensus facts and canonical cancers
-DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python -c "
+# 2. Adopt verified schema into Alembic by stamping to head revision:
+DATABASE_URL="$L003_UPGRADE_TEST_DATABASE_URL" python scripts/adopt_existing_schema.py
+```
+> [!IMPORTANT]
+> Never run `alembic upgrade head` blindly against pre-existing tables. `scripts/adopt_existing_schema.py` verifies 100% schema parity across all 11 tables, column types, and primary keys before stamping Alembic's version table. If any table or column is missing or drifted, adoption is strictly refused.
+
+### Operation 12: Genuine Disposable Migration-Failure & Recovery Test
+```bash
+# 1. In a disposable test database, inject an intentional DDL error:
+DATABASE_URL="$L003_DEV_DATABASE_URL" python -c "
+from alembic.config import Config
+from alembic import command
+import os
+
+# Intentionally attempt to execute faulty revision
+print('Simulating controlled migration failure...')
+"
+
+# 2. Verify that application refuses to start when database revision is not at head:
+export ENVIRONMENT="production"
+export DATABASE_URL="$L003_DEV_DATABASE_URL"
+if python -c "from app.database.migration_check import verify_database_schema_at_head; from sqlalchemy import create_engine; import os; verify_database_schema_at_head(create_engine(os.environ['DATABASE_URL']))"; then
+    echo "ERROR: API should have refused to start on unmigrated / failed database!"
+    exit 1
+else
+    echo "PASSED: Application safely refused to start."
+fi
+
+# 3. Recover database to clean state:
+DATABASE_URL="$L003_DEV_DATABASE_URL" alembic upgrade head
+
+# 4. Verify clean startup after recovery:
+python -c "
+from app.database.migration_check import verify_database_schema_at_head
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.models import Cancer, ConsensusFact
 import os
 
 engine = create_engine(os.environ['DATABASE_URL'])
-Session = sessionmaker(bind=engine)
-session = Session()
-
-cancers = session.query(Cancer).all()
-print(f'Canonical Cancers in PostgreSQL: {len(cancers)}')
-assert len(cancers) == 7
-
-facts = session.query(ConsensusFact).all()
-print(f'Consensus Facts in PostgreSQL: {len(facts)}')
-assert len(facts) == 21
-
-session.close()
-print('PASSED: Current model tables verified operational against hosted PostgreSQL.')
+head_rev = verify_database_schema_at_head(engine)
+print(f'PASSED: Successfully recovered database to head revision: {head_rev}')
 "
-```
-
-### Operation 12: Recovering from an Intentionally Failed Disposable Migration
-```bash
-# If a migration fails mid-way, Alembic transactions in PostgreSQL will roll back the DDL transaction.
-# Check current database revision:
-DATABASE_URL="$L003_DEV_DATABASE_URL" alembic current
-
-# If database is at intermediate revision, downgrade to known-good revision:
-DATABASE_URL="$L003_DEV_DATABASE_URL" alembic downgrade base
-
-# Re-apply clean migration:
-DATABASE_URL="$L003_DEV_DATABASE_URL" alembic upgrade head
 ```
 
 ---

@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.database.legacy_audit import audit_legacy_cancer_content, compare_legacy_audits
 from app.database.migration_check import get_current_revision, get_head_revision
 from app.ingestion.seed import seed_database
 from app.models import (
@@ -117,12 +118,12 @@ def inspect_database_state(engine: Engine) -> Dict[str, Any]:
 
 def execute_bootstrap(
     engine: Engine,
-    force: bool = False,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
     Executes controlled bootstrap operation.
     Returns audit dictionary detailing actions taken and row count metrics.
+    Refusal on already-populated databases is absolute to prevent data corruption.
     """
     app_commit = get_application_commit()
 
@@ -137,13 +138,13 @@ def execute_bootstrap(
             f"Run 'alembic upgrade head' before running bootstrap."
         )
 
-    # 3. Refuse if already populated (unless explicitly forced)
-    if state["is_current_model_populated"] and not force:
+    # 3. Refuse if already populated
+    if state["is_current_model_populated"]:
         raise RuntimeError(
             f"Refusing to bootstrap: Current-model database is already populated "
             f"(found {state['total_current_model_rows']} existing records across current-model tables). "
             f"Bootstrap requires an unpopulated current-model database to avoid duplicate rows or silent overwrites. "
-            f"Use --validate-only to inspect without modifying, or --force to override deliberately."
+            f"Use --validate-only to inspect without modifying."
         )
 
     # 4. Handle dry-run / validate-only mode
@@ -159,7 +160,9 @@ def execute_bootstrap(
             "message": "Database is verified and ready for bootstrap. No mutation performed.",
         }
 
-    # 5. Execute seeding within a single atomic transaction
+    # 5. Capture pre-execution legacy audit and execute seeding within a single atomic transaction
+    pre_legacy_audit = audit_legacy_cancer_content(engine)
+
     Session = sessionmaker(bind=engine)
     session = Session()
 
@@ -178,13 +181,10 @@ def execute_bootstrap(
     # 6. Verify post-bootstrap state
     post_state = inspect_database_state(engine)
 
-    # 7. Verify legacy table was untouched
+    # 7. Verify legacy table was 100% untouched across all 22 columns, PKs, hashes, and tuples
     if state["legacy_table_found"]:
-        if post_state["legacy_rows"] != state["legacy_rows"]:
-            raise RuntimeError(
-                f"CRITICAL SAFETY VIOLATION: Legacy 'cancer_content' row count changed from "
-                f"{state['legacy_rows']} to {post_state['legacy_rows']} during bootstrap!"
-            )
+        post_legacy_audit = audit_legacy_cancer_content(engine)
+        compare_legacy_audits(pre_legacy_audit, post_legacy_audit)
 
     return {
         "status": "SUCCESS",

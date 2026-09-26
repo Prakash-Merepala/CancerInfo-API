@@ -235,12 +235,9 @@ python scripts/bootstrap.py --validate-only
 
 # Execute baseline seeding (single-transaction, safe rollback on failure)
 python scripts/bootstrap.py
-
-# Force seed (only if explicitly required)
-python scripts/bootstrap.py --force
 ```
 - The bootstrap script validates that the database is at Alembic head revision.
-- Refuses to run against populated current-model databases by default.
+- Refuses to run against populated current-model databases to prevent data corruption or duplicate rows.
 - Runs entirely within a single atomic database transaction. If any error occurs, the entire operation is rolled back with zero leftover rows.
 - Seeds all 191 baseline records across sources, cancers, aliases, source documents, content records, citations, and consensus facts with full provenance.
 
@@ -249,5 +246,3 @@ python scripts/bootstrap.py --force
 - When `ENVIRONMENT=production` or `CHECK_MIGRATIONS_ON_STARTUP=true`, the API validates that the connected database schema is at Alembic head revision before serving traffic. If unmigrated or unreachable, startup fails with a clean, actionable error.
 - Production environment requires PostgreSQL (`postgresql+psycopg2://`); SQLite and missing connection URLs are rejected at configuration load time.
 - In-flight admin seed endpoint `POST /v1/admin/seed` returns HTTP 403 Forbidden in production, directing operators to use the controlled CLI bootstrap script.
-
-

@@ -22,6 +22,7 @@ COPY rapidapi/ ./rapidapi/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY scripts/bootstrap.py ./scripts/bootstrap.py
+COPY scripts/adopt_existing_schema.py ./scripts/adopt_existing_schema.py
 
 EXPOSE 3000
 

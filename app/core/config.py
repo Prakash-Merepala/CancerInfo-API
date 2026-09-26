@@ -74,13 +74,13 @@ class Settings(BaseSettings):
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError(
                     "Production configuration error: SQLite is strictly forbidden in production. "
-                    f"Provided DATABASE_URL: '{self.DATABASE_URL}'. "
                     "Production requires a valid PostgreSQL connection URL."
                 )
             if not (self.DATABASE_URL.startswith("postgresql://") or self.DATABASE_URL.startswith("postgresql+")):
                 raise ValueError(
                     "Production configuration error: DATABASE_URL must be a PostgreSQL connection URL "
-                    f"(starting with postgresql:// or postgresql+psycopg2://). Provided: '{self.DATABASE_URL}'."
+                    "(starting with postgresql:// or postgresql+psycopg2://). "
+                    "The supplied connection scheme is not supported."
                 )
         return self
 

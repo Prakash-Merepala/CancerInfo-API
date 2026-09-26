@@ -48,7 +48,7 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
     """
     Verifies that the target database schema matches Base.metadata definitions
     across all 11 current-model tables.
-    
+
     Raises:
         SchemaParityError: If tables are missing or columns/primary keys differ.
     """
@@ -120,7 +120,7 @@ def verify_schema_parity(engine: Engine) -> Dict[str, Any]:
 def adopt_existing_schema(engine: Engine, dry_run: bool = False) -> Dict[str, Any]:
     """
     Safely adopts pre-Alembic database into Alembic version control.
-    
+
     1. Verifies complete schema parity across all 11 tables.
     2. Verifies current Alembic status (refuses if already managed at head).
     3. Stamps database to head revision (unless dry_run=True).

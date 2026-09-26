@@ -44,7 +44,7 @@ def audit_legacy_cancer_content(engine: Engine) -> Dict[str, Any]:
     """
     Captures an exact, deterministic structural and cryptographic audit
     of the legacy 'cancer_content' table.
-    
+
     Returns:
         dict containing:
         - exists: bool

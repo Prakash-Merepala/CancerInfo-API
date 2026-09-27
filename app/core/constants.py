@@ -22,6 +22,14 @@ class LicenseStatus(str, Enum):
     REJECTED = "REJECTED"
 
 
+class PublicationStatus(str, Enum):
+    ELIGIBLE = "ELIGIBLE"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    QUARANTINED = "QUARANTINED"
+    PERMISSION_PENDING = "PERMISSION_PENDING"
+    REJECTED = "REJECTED"
+
+
 class JurisdictionScope(str, Enum):
     GLOBAL = "GLOBAL"
     REGIONAL = "REGIONAL"

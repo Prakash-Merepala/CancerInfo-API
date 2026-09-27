@@ -3,7 +3,7 @@
 **Task:** CIAPI-L004 — Resolve Document Reuse Rights and Quarantine Unresolved Material  
 **Repository:** `Prakash-Merepala/CancerInfo-API`  
 **Current Branch:** `CIAPI-L004-resolve-document-reuse-rights-and-quarantine`  
-**Reviewed Commit SHA:** `2057d1c6fa10b44a45aeafb70678ef620237e2e9`  
+**Reviewed Commit SHA:** `5c060039925a4b8ae5e40930fd53834d1f98084e`  
 **Actual Remote L003 Merge Base:** `00356293d28a3cdb99320db5dbcd7e13b2766fd1`  
 **Reviewer:** **Mithra**  
 **Engineering Author:** Antigravity  
@@ -20,8 +20,9 @@ To maintain complete transparency and truthfulness in accordance with Mithra's r
 │  - Linear reversible Alembic migration (0002_document_rights, <=32 chars)       │
 │  - Exact document rights models, relationships, and consolidated validator      │
 │  - Read-only inspection commands & startup schema validation                    │
-│  - Explicit, guarded legacy revision repair with verified persistence           │
+│  - Explicit operator-only legacy revision repair (scripts/repair_legacy_revision)│
 │  - Populated transition preserving reviews, references, and verifying links     │
+│  - Executed test_populated_postgresql_transition with valid FK fixtures in CI   │
 │  - Full automated test suite: 101 passed, 1 skipped (27 rights, 24 migrations)  │
 ├────────────────────────────────────────────────────────────────────────────────┤
 │  L004 ACCEPTANCE STATUS: BLOCKED ON OWNER REVIEW (OPEN)                        │
@@ -29,6 +30,7 @@ To maintain complete transparency and truthfulness in accordance with Mithra's r
 │  - 0 of 32 candidate documents have formal owner review dates (rights_reviewed_at)│
 │  - 0 of 32 candidate documents have formal decision owners (rights_reviewer)   │
 │  - 0 of 32 candidate documents are marked ELIGIBLE (Fail-closed quarantine)     │
+│  - Owner-approved corpus decision: PENDING (explicit decision required)         │
 │  - 4 of 4 WHO candidate documents have third-party permission unsubmitted      │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -112,12 +114,12 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
      - `explicitly_excluded_documents`: 0 (quarantined or rejected with recorded final review)
      - `excluded_untracked_documents`: 0
    - Prevents submitted-but-unresolved permissions (`REQUESTED_AWAITING_RESPONSE`) from producing false acceptance.
-   - Rejects single-record eligible corpus; requires an owner-approved eligible corpus across authoritative sources.
+   - Replaced arbitrary document-count threshold (`len >= 2`) with an explicit owner-approved corpus decision (`owner_corpus_decision`). Until Prakash supplies that decision, it is reported as `PENDING`. Cross-source approval is never claimed based only on document count.
    - Returns structured blockers and deficiency breakdowns.
 
 2. **Executable Acceptance Audit CLI (`scripts/audit_rights_acceptance.py`)**:
    - Run via: `python scripts/audit_rights_acceptance.py`
-   - Deterministically prints candidate counts, breakdown, and active blockers.
+   - Deterministically prints candidate counts, breakdown, owner corpus decision status (`PENDING`), and active blockers.
 
 3. **Controlled Transition Tool for Populated L003 Databases (`app/database/transition.py` & `scripts/transition_l004.py`)**:
    - Upgrades populated L003 databases to L004 schema without reseeding or overwriting existing content, quotes, or attributions.
@@ -125,6 +127,7 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
    - Enforces the supported schema revision (`0002_document_rights`).
    - Verifies citation linkage and document postconditions before commit; never reports SUCCESS with unresolved links.
    - Atomic, transactional, and repeat-safe (idempotent).
+   - Supports explicit `--repair-legacy` flag for operators managing dev/disposable environments.
    - CLI usage:
      ```bash
      # Dry-run validation (inspects database without mutations):
@@ -141,10 +144,11 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
    - Supports full storage, derivative, attribution, and quarantine clearing settings.
    - Preserves static `RIGHTS_INVENTORY` baseline while persisting reviews durably into database transactions (`db=session, commit=True`).
 
-5. **Read-Only Schema Verification & Explicit Guarded Legacy Repair (`app/database/migration_check.py`)**:
-   - `get_current_revision(engine)`: Strictly read-only; performs zero mutations.
-   - `verify_database_schema_at_head(engine)`: Strictly read-only; raises `RuntimeError` if database has legacy or outdated revisions without mutation.
-   - `repair_legacy_revision(engine)`: Explicit, guarded repair operation for disposable SQLite/dev databases stamped with `0002_document_rights_and_consensus_linkage`. Updates within an atomic transaction, verifies persisted state on disk, and never suppresses repair errors.
+5. **Read-Only Schema Verification & Separate Explicit Operator Legacy Repair**:
+   - Removed automatic `repair_legacy_revision` execution from `alembic/env.py`.
+   - Inspection commands (`get_current_revision`, `verify_database_schema_at_head`, `alembic current`) are strictly read-only and leave stored revisions unchanged.
+   - Legacy revision repair is exposed as a separate explicit operator action via `scripts/repair_legacy_revision.py` or programmatic `repair_legacy_revision(engine)`.
+   - Verified that Alembic inspection commands leave stored legacy revisions completely unmutated.
 
 ---
 
@@ -181,22 +185,34 @@ tests/test_taxonomy_and_normalization.py .....                           [100%]
      - Preserved owner reviews and permission references across restarts and repeat execution (`test_populated_transition_preserves_owner_reviews_and_permission_references`).
      - Postcondition failure and atomic rollback on unresolved links (`test_transition_fails_and_rolls_back_on_unresolved_links`).
      - Schema revision enforcement (`test_transition_enforces_supported_schema_revision`).
-     - Rejection of inconsistent ELIGIBLE records and single-record corpus (`test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record`).
+     - Rejection of inconsistent ELIGIBLE records and requirement for explicit owner corpus decision (`test_acceptance_evaluation_rejects_inconsistent_eligible_and_requires_owner_corpus_decision`).
      - Read-only inspection and startup schema check verification.
      - Legacy revision repair modeling actual supported disposable SQLite scenario (`test_legacy_long_revision_identifier_remapped_transparently`).
 
-2. **PostgreSQL CI Resolution (CI Runs 36301697756 & 36341720113)**:
-   - **CI Run 36301697756**: Original revision ID was 43 chars, overflowing PostgreSQL's `alembic_version.version_num VARCHAR(32)`. Resolved by shortening to `0002_document_rights` (20 chars).
-   - **CI Run 36341720113**: The previous test attempted to insert the oversized 43-character identifier into PostgreSQL `VARCHAR(32)` during migration tests. Resolved by modeling the actual supported legacy scenario: disposable SQLite databases where VARCHAR length is not enforced. On PostgreSQL, the test asserts that `alembic_version.version_num` preserves `VARCHAR(32)` without weakening schema, while SQLite tests explicit repair via `repair_legacy_revision(engine)`.
-   - **Populated PostgreSQL Transition Coverage**: Added `test_populated_postgresql_transition`, which executes populated L003 upgrade, dry-run transition, apply transition, and repeat-safe execution against disposable PostgreSQL when `POSTGRES_TEST_URL` is set in CI.
+2. **PostgreSQL CI Resolution & Execution Evidence**:
+   - **PostgreSQL CI Stage**: Updated `.github/workflows/ci.yml:67` to explicitly execute `tests/test_document_rights.py::test_populated_postgresql_transition` alongside `test_migrations.py` and `test_bootstrap.py`.
+   - **Fixture FK Integrity**: Corrected the fixture in `test_populated_postgresql_transition` to insert all 5 authoritative sources (`nci-us`, `cdc-us`, `who-global`, `nhs-uk`, `cancer-australia`) and all 7 canonical cancers, retaining full PostgreSQL foreign-key constraints.
+   - **Passing Live PostgreSQL Execution Evidence**:
+     ```text
+     tests/test_document_rights.py::test_populated_postgresql_transition PASSED [100%] in 0.35s
+     ```
+     Verified:
+     - Disposable PostgreSQL database created safely via `disposable_postgres`.
+     - L003 schema created and populated with source, cancer, document, fact, and unlinked fact source.
+     - Alembic upgrade head cleanly reached `0002_document_rights`.
+     - Dry-run transition validated 0 mutations.
+     - Apply transition populated all 32 documents with valid foreign keys, linked citations, verified postconditions before commit, and succeeded.
+     - Repeat transition ran repeat-safe with 0 redundant links.
+     - Retained full PostgreSQL foreign key constraints throughout.
 
 3. **Explicitly Identified Skipped or Unavailable Checks**:
    - **Production Neon PostgreSQL Database**: Direct connections were strictly prohibited and not executed (engineering safety guardrails enforced).
    - **Live Scraping & Clinical Fact Verification**: Out of scope for CIAPI-L004 rights architecture.
    - **Universal Publication-Response Gate**: Out of scope for CIAPI-L004; designated for CIAPI-L008.
 
-4. **Unresolved Owner Review**:
-   - As truthfully reported, **0 of 32** candidate documents have owner review dates or reviewer signatures. This remains an active blocker for repository owner (Prakash) to complete.
+4. **Unresolved Owner Review & Pending Corpus Decision**:
+   - **0 of 32** candidate documents have owner review dates or reviewer signatures.
+   - Owner-approved corpus decision is **PENDING**; Prakash has not supplied an explicit decision approving the publication-eligible corpus.
 
 ---
 
@@ -207,3 +223,4 @@ The following items are required from Prakash to close L004 acceptance:
 1. **Perform Item-Level Inspection**: Inspect each of the 32 candidate URLs on the live web to check for embedded third-party diagrams, licensed medical illustrations, proprietary drug monographs, or external copyright notices.
 2. **Record Review Decisions Durably**: Sign off with name and review timestamp using `record_owner_rights_review(..., db=session, commit=True)` or updating `RIGHTS_INVENTORY`.
 3. **WHO Commercial Waiver**: Submit a formal permission request to the WHO permissions committee for the 4 WHO fact sheets, requesting a commercial API redistribution waiver. Update their status to `REQUESTED_AWAITING_RESPONSE` once submitted.
+4. **Supply Explicit Owner Corpus Approval Decision**: Provide an explicit owner decision approving the publication-eligible corpus (acceptance cannot be satisfied by document count alone).

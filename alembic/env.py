@@ -63,10 +63,6 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    # Explicit, guarded operation to repair legacy revision identifiers in dev/disposable databases
-    from app.database.migration_check import repair_legacy_revision
-    repair_legacy_revision(connectable)
-
     with connectable.connect() as connection:
 
         context.configure(

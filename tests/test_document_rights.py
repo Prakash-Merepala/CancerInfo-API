@@ -998,18 +998,21 @@ def test_transition_enforces_supported_schema_revision(tmp_path):
     engine.dispose()
 
 
-def test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record(test_db_session):
+def test_acceptance_evaluation_rejects_inconsistent_eligible_and_requires_owner_corpus_decision(test_db_session):
     """
-    Issue 5: Correct acceptance evaluation so unresolved candidate decisions and
-    inconsistent ELIGIBLE records cannot silently pass. Separate explicitly excluded documents
-    from unresolved candidates, and require an owner-approved eligible corpus rather than merely one record.
+    Issue 3: Replace the invented two-document acceptance threshold with an explicit
+    owner-approved corpus decision. Until Prakash supplies that decision, report it as pending.
+    Do not claim cross-source approval based only on document count.
     """
-    # 1. Baseline unreviewed audit
+    # 1. Baseline unreviewed audit: reports pending owner corpus decision
     report = audit_candidate_acceptance(db=test_db_session)
     assert report["l004_acceptance_satisfied"] is False
+    assert report["owner_corpus_decision"] == "PENDING"
+    assert report["owner_corpus_approved"] is False
     assert len(report["unresolved_candidate_decisions"]) == 28
     assert len(report["unresolved_permission_decisions"]) == 4
     assert len(report["owner_approved_eligible_corpus"]) == 0
+    assert any("Owner-approved corpus decision is pending" in b for b in report["blockers"])
 
     # 2. Inconsistent ELIGIBLE record (marked ELIGIBLE but missing required review fields)
     doc = test_db_session.query(SourceDocument).filter_by(
@@ -1024,7 +1027,7 @@ def test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record(t
     assert report_inconsistent["l004_acceptance_satisfied"] is False
     assert any("inconsistent" in b.lower() or "fail publication eligibility" in b.lower() for b in report_inconsistent["blockers"])
 
-    # 3. Single valid eligible document does NOT satisfy corpus acceptance
+    # 3. Documents marked eligible without explicit owner corpus decision remain pending and cannot claim acceptance
     record_owner_rights_review(
         url="https://www.cancer.gov/types/breast",
         reviewer="Jaya Prakash Merepala",
@@ -1039,21 +1042,53 @@ def test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record(t
         db=test_db_session,
         commit=True,
     )
-    # Set full storage/derivative decisions
     doc.full_text_storage_allowed = True
     doc.derived_summary_allowed = True
     doc.attribution_required = False
     test_db_session.commit()
 
-    report_single = audit_candidate_acceptance(db=test_db_session)
-    assert len(report_single["owner_approved_eligible_corpus"]) == 1
-    assert report_single["l004_acceptance_satisfied"] is False
-    assert any("not merely a single isolated record" in b for b in report_single["blockers"])
+    report_pending_corpus = audit_candidate_acceptance(db=test_db_session)
+    assert len(report_pending_corpus["owner_approved_eligible_corpus"]) == 1
+    assert report_pending_corpus["owner_corpus_decision"] == "PENDING"
+    assert report_pending_corpus["l004_acceptance_satisfied"] is False
+    assert any("Owner-approved corpus decision is pending" in b for b in report_pending_corpus["blockers"])
+
+    # 4. Even multiple eligible documents cannot claim cross-source approval based only on document count
+    record_owner_rights_review(
+        url="https://www.cancer.gov/types/breast/screening",
+        reviewer="Jaya Prakash Merepala",
+        reviewed_at=datetime.utcnow(),
+        publication_status=PublicationStatus.ELIGIBLE,
+        rights_evidence_url="https://www.cancer.gov/policies/copyright-reuse",
+        permissible_use="U.S. Public Domain",
+        commercial_redistribution_allowed=True,
+        redistribution_allowed=True,
+        quarantine_reason=None,
+        third_party_permission_status=ThirdPartyPermissionStatus.NOT_APPLICABLE,
+        db=test_db_session,
+        commit=True,
+    )
+    doc2 = test_db_session.query(SourceDocument).filter_by(
+        original_url="https://www.cancer.gov/types/breast/screening"
+    ).one()
+    doc2.full_text_storage_allowed = True
+    doc2.derived_summary_allowed = True
+    doc2.attribution_required = False
+    test_db_session.commit()
+
+    report_two_docs = audit_candidate_acceptance(db=test_db_session)
+    assert len(report_two_docs["owner_approved_eligible_corpus"]) == 2
+    # Document count of 2 does NOT automatically grant acceptance; owner corpus decision is still pending!
+    assert report_two_docs["owner_corpus_decision"] == "PENDING"
+    assert report_two_docs["l004_acceptance_satisfied"] is False
+    assert any("Owner-approved corpus decision is pending" in b for b in report_two_docs["blockers"])
 
 
 def test_populated_postgresql_transition():
     """
-    Issue 6: Focused regression coverage for populated transition on PostgreSQL.
+    Issue 1: Focused regression coverage for populated transition on PostgreSQL.
+    Corrects fixture so every source referenced by inserted documents exists in sources,
+    with full foreign-key enforcement retained.
     Runs whenever POSTGRES_TEST_URL is provided (as in GitHub Actions CI).
     """
     import os
@@ -1075,15 +1110,30 @@ def test_populated_postgresql_transition():
 
         # 2. Populate L003 data via raw SQL
         with pg_engine.connect() as conn:
+            # Insert all 5 authoritative sources so every candidate document in RIGHTS_INVENTORY
+            # has its referenced source present, retaining full foreign-key enforcement
             conn.execute(text(
                 "INSERT INTO sources (id, organization_name, source_name, base_url, country_code, "
                 "source_type, trust_tier, authority_type, license_type, license_status, active) "
-                "VALUES ('nci-us', 'National Cancer Institute', 'NCI', 'https://www.cancer.gov', 'US', 'government', "
-                "'Tier 1', 'GOVERNMENT', 'Public Domain', 'APPROVED', true)"
+                "VALUES "
+                "('nci-us', 'National Cancer Institute', 'NCI', 'https://www.cancer.gov', 'US', 'government', 'Tier 1', 'GOVERNMENT', 'Public Domain', 'APPROVED', true), "
+                "('cdc-us', 'Centers for Disease Control and Prevention', 'CDC', 'https://www.cdc.gov', 'US', 'government', 'Tier 1', 'GOVERNMENT', 'Public Domain', 'APPROVED', true), "
+                "('who-global', 'World Health Organization', 'WHO', 'https://www.who.int', 'INT', 'international', 'Tier 1', 'INTERGOVERNMENTAL', 'CC BY-NC-SA 3.0 IGO', 'APPROVED', true), "
+                "('nhs-uk', 'National Health Service', 'NHS', 'https://www.nhs.uk', 'GB', 'government', 'Tier 1', 'GOVERNMENT', 'Open Government Licence v3.0', 'APPROVED', true), "
+                "('cancer-australia', 'Cancer Australia', 'Cancer Australia', 'https://www.canceraustralia.gov.au', 'AU', 'government', 'Tier 1', 'GOVERNMENT', 'CC BY 4.0', 'APPROVED', true)"
             ))
+            # Insert canonical cancers referenced by candidate documents
             conn.execute(text(
-                "INSERT INTO cancers (id, canonical_name, slug) VALUES ('cancer-breast', 'Breast Cancer', 'breast-cancer')"
+                "INSERT INTO cancers (id, canonical_name, slug) VALUES "
+                "('cancer-breast', 'Breast Cancer', 'breast-cancer'), "
+                "('cancer-cervical', 'Cervical Cancer', 'cervical-cancer'), "
+                "('cancer-colorectal', 'Colorectal Cancer', 'colorectal-cancer'), "
+                "('cancer-lung', 'Lung Cancer', 'lung-cancer'), "
+                "('cancer-melanoma', 'Melanoma Skin Cancer', 'melanoma-skin-cancer'), "
+                "('cancer-pancreatic', 'Pancreatic Cancer', 'pancreatic-cancer'), "
+                "('cancer-prostate', 'Prostate Cancer', 'prostate-cancer')"
             ))
+            # Insert existing populated L003 document with foreign key to nci-us and cancer-breast
             conn.execute(text(
                 "INSERT INTO source_documents (id, source_id, original_url, title, language, country_code, "
                 "jurisdiction_scope, content_hash, processing_status, canonical_cancer_id) "
@@ -1115,11 +1165,25 @@ def test_populated_postgresql_transition():
         assert apply_res["status"] == "SUCCESS"
         assert apply_res["mode"] == "APPLY"
         assert apply_res["citations_linked"] == 1
+        assert apply_res["remaining_unlinked_citations"] == 0
 
         # 6. Verify repeat-safe idempotency on PostgreSQL
         repeat_res = transition_populated_l003_database(pg_engine, dry_run=False)
         assert repeat_res["status"] == "SUCCESS"
         assert repeat_res["citations_linked"] == 0
+
+        # 7. Verify postcondition in database: foreign keys valid, all 32 documents exist, citation linked
+        with pg_engine.connect() as conn:
+            doc_count = conn.execute(text("SELECT COUNT(*) FROM source_documents")).scalar()
+            assert doc_count == 32
+            linked_count = conn.execute(
+                text("SELECT COUNT(*) FROM consensus_fact_sources WHERE source_document_id = 'doc-pg-1'")
+            ).scalar()
+            assert linked_count == 1
+            unlinked = conn.execute(
+                text("SELECT COUNT(*) FROM consensus_fact_sources WHERE source_document_id IS NULL")
+            ).scalar()
+            assert unlinked == 0
 
         pg_engine.dispose()
 

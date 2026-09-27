@@ -884,7 +884,11 @@ def export_rights_audit_report(db: Optional[Session] = None) -> List[Dict[str, A
     return report
 
 
-def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Dict[str, Any]:
+def audit_candidate_acceptance(
+    records=None,
+    db: Optional[Session] = None,
+    owner_corpus_decision: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Deterministic acceptance-validation audit for CIAPI-L004 candidate documents.
     Inspects all candidate documents and reports exact status across:
@@ -896,8 +900,12 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
     - publication decision
     - third-party permission status
     - actual fail-closed publication eligibility evaluation
+    - explicit owner-approved corpus decision (supplied by repository owner Prakash)
 
     Truthfully separates Engineering Implementation status from L004 Acceptance status.
+    Requires an explicit owner-approved corpus decision supplied by repository owner (Prakash).
+    Until Prakash supplies that decision, reports it as PENDING. Never claims cross-source
+    approval based only on document count.
     Distinguishes:
     - Candidate documents (32 canonical URLs)
     - Excluded / untracked documents (non-candidate documents present in database)
@@ -1069,13 +1077,18 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         blockers.append(
             f"{permission_required_not_submitted} WHO candidate documents have third-party commercial permission REQUIRED_NOT_SUBMITTED (unsubmitted)"
         )
+    # Explicit owner-approved corpus decision evaluation
+    owner_corpus_status = owner_corpus_decision if owner_corpus_decision else "PENDING"
+    owner_corpus_approved = (owner_corpus_decision == "APPROVED")
+
+    if not owner_corpus_approved:
+        blockers.append(
+            f"Owner-approved corpus decision is pending: Prakash has not supplied an explicit decision approving the publication-eligible corpus (status: {owner_corpus_status}). Acceptance cannot be claimed based only on document count."
+        )
+
     if len(owner_approved_eligible_corpus) == 0:
         blockers.append(
             "0 candidate documents are currently verified publication-eligible (entire candidate corpus is quarantined/review-required)"
-        )
-    elif len(owner_approved_eligible_corpus) == 1:
-        blockers.append(
-            "Only 1 candidate document is marked eligible; acceptance requires an owner-approved eligible corpus across authoritative sources, not merely a single isolated record"
         )
 
     engineering_implementation_complete = (
@@ -1092,14 +1105,16 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         and len(documents_missing_decision_owner) == 0
     )
     # L004 acceptance requires all candidate documents to be reviewed, permissions resolved,
-    # no unresolved candidates or inconsistent records, and an owner-approved eligible corpus
+    # no unresolved candidates or inconsistent records, an explicit owner corpus approval decision,
+    # and validated publication-eligible documents.
     l004_acceptance_satisfied = (
         engineering_implementation_complete
         and owner_review_completed
+        and owner_corpus_approved
         and len(unresolved_candidate_decisions) == 0
         and len(unresolved_permission_decisions) == 0
         and len(inconsistent_eligible_records) == 0
-        and len(owner_approved_eligible_corpus) >= 2
+        and len(owner_approved_eligible_corpus) > 0
         and len(blockers) == 0
     )
 
@@ -1116,6 +1131,8 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         "permission_pending_count": permission_pending_count,
         "permission_requests_submitted": permission_requests_submitted,
         "permission_required_not_submitted": permission_required_not_submitted,
+        "owner_corpus_decision": owner_corpus_status,
+        "owner_corpus_approved": owner_corpus_approved,
         "owner_approved_eligible_corpus_count": len(owner_approved_eligible_corpus),
         "owner_approved_eligible_corpus": owner_approved_eligible_corpus,
         "inconsistent_eligible_records_count": len(inconsistent_eligible_records),

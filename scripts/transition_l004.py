@@ -58,6 +58,11 @@ Examples:
         action="store_true",
         help="Inspect database state and report planned changes without mutating records.",
     )
+    parser.add_argument(
+        "--repair-legacy",
+        action="store_true",
+        help="Explicitly repair legacy revision identifier in disposable dev database before transition.",
+    )
 
     args = parser.parse_args()
 
@@ -69,6 +74,14 @@ Examples:
     print(f"Environment:     {settings.ENVIRONMENT}")
     print(f"Mode:            {'VALIDATE ONLY (DRY-RUN)' if args.dry_run else 'APPLY TRANSITION'}")
     print("-" * 70)
+
+    if args.repair_legacy:
+        from app.database.migration_check import repair_legacy_revision
+        repaired = repair_legacy_revision(engine)
+        if repaired:
+            print(f"[REPAIR] Repaired legacy revision to: {repaired}")
+        else:
+            print("[REPAIR] No legacy revision repair required.")
 
     try:
         result = transition_populated_l003_database(engine, dry_run=args.dry_run)

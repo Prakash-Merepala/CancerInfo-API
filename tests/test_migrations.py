@@ -652,9 +652,16 @@ def test_legacy_long_revision_identifier_remapped_transparently(test_db_url, ale
             conn.execute(text("UPDATE alembic_version SET version_num = '0002_document_rights_and_consensus_linkage'"))
             conn.commit()
 
-        # 2. Verify get_current_revision is strictly read-only: reports raw legacy revision, no side-effect mutation
+        # 2. Verify get_current_revision and Alembic inspection commands are strictly read-only:
+        # inspection leaves the stored legacy revision completely unchanged
         raw_rev = get_current_revision(engine)
         assert raw_rev == "0002_document_rights_and_consensus_linkage"
+
+        # Alembic inspection fails on unknown revision and leaves stored revision completely unchanged
+        with pytest.raises(Exception) as exc_info:
+            command.current(alembic_cfg)
+        assert "Can't locate revision" in str(exc_info.value)
+        assert get_current_revision(engine) == "0002_document_rights_and_consensus_linkage"
 
         # 3. Verify startup schema check fails fast and read-only on legacy revision
         with pytest.raises(RuntimeError) as exc_info:
@@ -663,7 +670,7 @@ def test_legacy_long_revision_identifier_remapped_transparently(test_db_url, ale
         # Database remains unmutated
         assert get_current_revision(engine) == "0002_document_rights_and_consensus_linkage"
 
-        # 4. Explicit guarded repair
+        # 4. Explicit operator action required to repair legacy revision
         repaired = repair_legacy_revision(engine)
         assert repaired == "0002_document_rights"
 

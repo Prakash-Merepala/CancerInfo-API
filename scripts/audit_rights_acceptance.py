@@ -48,6 +48,7 @@ def main() -> int:
     print("STATUS SUMMARY:")
     print(f"  Engineering Implementation Complete:  {report['engineering_implementation_complete']}")
     print(f"  Owner Review Completed:               {report['owner_review_completed']}")
+    print(f"  Owner-Approved Corpus Decision:       {report['owner_corpus_decision']}")
     print(f"  L004 Acceptance Criteria Satisfied:   {report['l004_acceptance_satisfied']}")
     print("=" * 80)
 
@@ -62,6 +63,7 @@ def main() -> int:
         print("  2. Use record_owner_rights_review(url, reviewer='Jaya Prakash Merepala', db=session, commit=True, ...)")
         print("     to durably finalize decisions in the database.")
         print("  3. Submit formal permission inquiry to WHO permissions committee for WHO fact sheets.")
+        print("  4. Provide explicit owner decision approving the publication-eligible corpus (status currently PENDING).")
         print("=" * 80)
 
     return 0

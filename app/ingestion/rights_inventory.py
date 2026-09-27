@@ -13,7 +13,7 @@ Guiding Principles:
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 from sqlalchemy.orm import Session
 
 from app.core.constants import PublicationStatus, ThirdPartyPermissionStatus
@@ -895,18 +895,34 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
     - attribution decision
     - publication decision
     - third-party permission status
+    - actual fail-closed publication eligibility evaluation
 
     Truthfully separates Engineering Implementation status from L004 Acceptance status.
-    Missing owner review date/reviewer is explicitly flagged as an OPEN acceptance blocker.
+    Distinguishes:
+    - Candidate documents (32 canonical URLs)
+    - Excluded / untracked documents (non-candidate documents present in database)
+    - Owner-approved eligible corpus (documents actually validated as publication-eligible)
+    - Unresolved candidate decisions (awaiting item-level review or owner sign-off)
+    - Unresolved permission decisions (both unsubmitted and submitted-awaiting-response)
+    - Excluded / quarantined documents (quarantined or pending permissions)
     """
+    from app.core.rights_validation import evaluate_publication_eligibility
+
+    inv_urls = set(RIGHTS_INVENTORY.keys())
+    excluded_untracked_documents: List[str] = []
+
     if records is None:
         if db is not None:
             from app.models import SourceDocument
             db_docs = db.query(SourceDocument).all()
-            inv_urls = set(RIGHTS_INVENTORY.keys())
-            records = [d for d in db_docs if d.original_url in inv_urls]
-            if not records:
-                records = list_rights_inventory()
+            candidate_docs = []
+            for d in db_docs:
+                doc_url = getattr(d, "original_url", getattr(d, "url", None))
+                if doc_url in inv_urls:
+                    candidate_docs.append(d)
+                else:
+                    excluded_untracked_documents.append(doc_url)
+            records = candidate_docs if candidate_docs else list_rights_inventory()
         else:
             records = list_rights_inventory()
 
@@ -923,9 +939,15 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
     permission_requests_submitted = 0
     permission_required_not_submitted = 0
 
+    owner_approved_eligible_corpus: List[str] = []
+    unresolved_candidate_decisions: List[str] = []
+    unresolved_permission_decisions: List[str] = []
+    excluded_quarantined_documents: List[str] = []
+
     missing_fields_by_url: Dict[str, List[str]] = {}
     documents_missing_review_date: List[str] = []
     documents_missing_decision_owner: List[str] = []
+    eligibility_deficiencies_by_url: Dict[str, List[str]] = {}
 
     for doc in records:
         url = getattr(doc, "url", getattr(doc, "original_url", None))
@@ -985,17 +1007,32 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
                 eligible_count += 1
             elif pub_status == PublicationStatus.REVIEW_REQUIRED.value:
                 review_required_count += 1
+                unresolved_candidate_decisions.append(url)
             elif pub_status == PublicationStatus.PERMISSION_PENDING.value:
                 permission_pending_count += 1
+                excluded_quarantined_documents.append(url)
+            elif pub_status in {PublicationStatus.QUARANTINED.value, PublicationStatus.REJECTED.value}:
+                excluded_quarantined_documents.append(url)
         else:
             missing.append("publication_status")
 
         # 7. Third-party permission status
         tp_status = getattr(doc, "third_party_permission_status", None)
+        if hasattr(tp_status, "value"):
+            tp_status = tp_status.value
         if tp_status in {"REQUESTED_AWAITING_RESPONSE", "PENDING"}:
             permission_requests_submitted += 1
+            unresolved_permission_decisions.append(url)
         elif tp_status == "REQUIRED_NOT_SUBMITTED":
             permission_required_not_submitted += 1
+            unresolved_permission_decisions.append(url)
+
+        # 8. Actual publication eligibility evaluation (fail-closed)
+        is_eligible, deficiencies = evaluate_publication_eligibility(doc)
+        if is_eligible:
+            owner_approved_eligible_corpus.append(url)
+        else:
+            eligibility_deficiencies_by_url[url] = deficiencies
 
         if missing:
             missing_fields_by_url[url] = missing
@@ -1010,9 +1047,17 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         blockers.append(
             f"{total - with_decision_owner} candidate documents are missing formal owner decision reviewer (rights_reviewer is null)"
         )
+    if permission_requests_submitted > 0:
+        blockers.append(
+            f"{permission_requests_submitted} candidate documents have third-party commercial permission REQUESTED_AWAITING_RESPONSE (submitted but still unresolved; awaiting response)"
+        )
     if permission_required_not_submitted > 0:
         blockers.append(
             f"{permission_required_not_submitted} WHO candidate documents have third-party commercial permission REQUIRED_NOT_SUBMITTED (unsubmitted)"
+        )
+    if len(owner_approved_eligible_corpus) == 0:
+        blockers.append(
+            "0 candidate documents are currently verified publication-eligible (entire candidate corpus is quarantined/review-required)"
         )
 
     engineering_implementation_complete = (
@@ -1022,8 +1067,19 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         and with_attribution_decision == total
         and with_publication_decision == total
     )
-    owner_review_completed = (with_review_date == total and with_decision_owner == total)
-    l004_acceptance_satisfied = engineering_implementation_complete and owner_review_completed and (len(blockers) == 0)
+    owner_review_completed = (
+        with_review_date == total
+        and with_decision_owner == total
+        and len(documents_missing_review_date) == 0
+        and len(documents_missing_decision_owner) == 0
+    )
+    # L004 acceptance requires all candidate documents to be reviewed, permissions resolved, and no blockers
+    l004_acceptance_satisfied = (
+        engineering_implementation_complete
+        and owner_review_completed
+        and len(unresolved_permission_decisions) == 0
+        and len(blockers) == 0
+    )
 
     return {
         "total_candidate_documents": total,
@@ -1038,6 +1094,16 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         "permission_pending_count": permission_pending_count,
         "permission_requests_submitted": permission_requests_submitted,
         "permission_required_not_submitted": permission_required_not_submitted,
+        "owner_approved_eligible_corpus_count": len(owner_approved_eligible_corpus),
+        "owner_approved_eligible_corpus": owner_approved_eligible_corpus,
+        "unresolved_candidate_decisions_count": len(unresolved_candidate_decisions),
+        "unresolved_candidate_decisions": unresolved_candidate_decisions,
+        "unresolved_permission_decisions_count": len(unresolved_permission_decisions),
+        "unresolved_permission_decisions": unresolved_permission_decisions,
+        "excluded_quarantined_documents_count": len(excluded_quarantined_documents),
+        "excluded_quarantined_documents": excluded_quarantined_documents,
+        "excluded_untracked_documents_count": len(excluded_untracked_documents),
+        "excluded_untracked_documents": excluded_untracked_documents,
         "engineering_implementation_complete": engineering_implementation_complete,
         "owner_review_completed": owner_review_completed,
         "l004_acceptance_satisfied": l004_acceptance_satisfied,
@@ -1045,6 +1111,7 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         "documents_missing_review_date": documents_missing_review_date,
         "documents_missing_decision_owner": documents_missing_decision_owner,
         "missing_fields_by_url": missing_fields_by_url,
+        "eligibility_deficiencies_by_url": eligibility_deficiencies_by_url,
     }
 
 
@@ -1052,27 +1119,83 @@ def record_owner_rights_review(
     url: str,
     reviewer: str,
     reviewed_at: Optional[datetime] = None,
-    publication_status: Optional[str] = None,
+    publication_status: Optional[Union[str, PublicationStatus]] = None,
+    rights_evidence_url: Optional[str] = None,
     permissible_use: Optional[str] = None,
     commercial_redistribution_allowed: Optional[bool] = None,
     redistribution_allowed: Optional[bool] = None,
     quarantine_reason: Optional[str] = None,
-    third_party_permission_status: Optional[str] = None,
+    third_party_permission_status: Optional[Union[str, ThirdPartyPermissionStatus]] = None,
     third_party_permission_notes: Optional[str] = None,
+    permission_reference: Optional[str] = None,
     db: Optional[Session] = None,
+    commit: bool = True,
 ) -> Dict[str, Any]:
     """
-    Explicit owner review workflow function.
+    Explicit, durable, and auditable owner review workflow function.
     Allows repository owner (Prakash) to truthfully record a verified decision
     on an exact candidate document.
+
+    Safety invariants:
+    1. Rejects unknown target URLs (must match RIGHTS_INVENTORY or existing database document).
+    2. Supports recording exact evidence URLs and permission references.
+    3. Clearly documents transaction persistence:
+       - If db is passed, commits/persists durably to the database in a transaction.
+       - If db is omitted, clearly flags that the update is in-memory only and NOT saved to database.
     """
+    from urllib.parse import urlparse
+    from app.models import SourceDocument
+
     if not reviewer or not str(reviewer).strip():
         raise ValueError("A decision owner/reviewer name is required to record an owner review.")
+    reviewer_clean = str(reviewer).strip()
+
+    # 1. Validate target existence (reject unknown targets)
+    known_in_inventory = url in RIGHTS_INVENTORY
+    db_doc = None
+    if db is not None:
+        db_doc = db.query(SourceDocument).filter(
+            SourceDocument.original_url == url
+        ).first()
+
+    if not known_in_inventory and db_doc is None:
+        raise ValueError(
+            f"Unknown target document URL '{url}'. Cannot record review for an unrecognized target."
+        )
+
+    # 2. Validate evidence URL if provided
+    if rights_evidence_url is not None:
+        ev_clean = str(rights_evidence_url).strip()
+        parsed = urlparse(ev_clean)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"Invalid rights evidence URL: '{rights_evidence_url}'. Must be valid http/https URL.")
+
+    # 3. Format permission reference and notes if provided
+    combined_notes = third_party_permission_notes
+    if permission_reference:
+        ref_tag = f"[Permission Ref: {str(permission_reference).strip()}]"
+        if combined_notes and str(combined_notes).strip():
+            combined_notes = f"{ref_tag} {str(combined_notes).strip()}"
+        else:
+            combined_notes = ref_tag
 
     review_timestamp = reviewed_at or datetime.utcnow()
 
-    entry = RIGHTS_INVENTORY.get(url)
-    if entry:
+    # 4. Update in-memory inventory entry if present
+    if known_in_inventory:
+        entry = RIGHTS_INVENTORY[url]
+        pub_stat = publication_status
+        if isinstance(pub_stat, str):
+            pub_stat = PublicationStatus(pub_stat)
+        elif pub_stat is None:
+            pub_stat = entry.publication_status
+
+        tp_stat = third_party_permission_status
+        if hasattr(tp_stat, "value"):
+            tp_stat = tp_stat.value
+        elif tp_stat is None:
+            tp_stat = entry.third_party_permission_status
+
         updated = DocumentRightsDecision(
             url=entry.url,
             source_id=entry.source_id,
@@ -1081,10 +1204,10 @@ def record_owner_rights_review(
             canonical_cancer_slug=entry.canonical_cancer_slug,
             country_code=entry.country_code,
             jurisdiction_scope=entry.jurisdiction_scope,
-            publication_status=PublicationStatus(publication_status) if publication_status else entry.publication_status,
-            rights_evidence_url=entry.rights_evidence_url,
+            publication_status=pub_stat,
+            rights_evidence_url=str(rights_evidence_url).strip() if rights_evidence_url else entry.rights_evidence_url,
             rights_reviewed_at=review_timestamp,
-            rights_reviewer=str(reviewer).strip(),
+            rights_reviewer=reviewer_clean,
             permissible_use=permissible_use if permissible_use is not None else entry.permissible_use,
             redistribution_allowed=redistribution_allowed if redistribution_allowed is not None else entry.redistribution_allowed,
             commercial_redistribution_allowed=commercial_redistribution_allowed if commercial_redistribution_allowed is not None else entry.commercial_redistribution_allowed,
@@ -1094,37 +1217,60 @@ def record_owner_rights_review(
             attribution_text=entry.attribution_text,
             reuse_restrictions=entry.reuse_restrictions,
             quarantine_reason=quarantine_reason if quarantine_reason is not None else entry.quarantine_reason,
-            third_party_permission_status=third_party_permission_status if third_party_permission_status is not None else entry.third_party_permission_status,
-            third_party_permission_notes=third_party_permission_notes if third_party_permission_notes is not None else entry.third_party_permission_notes,
+            third_party_permission_status=tp_stat,
+            third_party_permission_notes=combined_notes if combined_notes is not None else entry.third_party_permission_notes,
         )
         RIGHTS_INVENTORY[url] = updated
 
-    if db:
-        from app.models import SourceDocument
-        doc = db.query(SourceDocument).filter(SourceDocument.original_url == url).first()
-        if doc:
-            doc.rights_reviewed_at = review_timestamp
-            doc.rights_reviewer = str(reviewer).strip()
+    # 5. Handle database transaction persistence
+    persisted_to_database = False
+    persistence_status = "TRANSIENT_MEMORY_ONLY"
+    persistence_warning: Optional[str] = (
+        "Review recorded in-memory only. To persist durably and auditably, "
+        "pass an active database session (db=session, commit=True)."
+    )
+
+    if db is not None:
+        if db_doc:
+            db_doc.rights_reviewed_at = review_timestamp
+            db_doc.rights_reviewer = reviewer_clean
+            if rights_evidence_url:
+                db_doc.rights_evidence_url = str(rights_evidence_url).strip()
             if publication_status:
-                doc.publication_status = str(publication_status)
+                db_doc.publication_status = str(publication_status.value if hasattr(publication_status, "value") else publication_status)
             if permissible_use is not None:
-                doc.permissible_use = permissible_use
+                db_doc.permissible_use = permissible_use
             if commercial_redistribution_allowed is not None:
-                doc.commercial_redistribution_allowed = commercial_redistribution_allowed
+                db_doc.commercial_redistribution_allowed = commercial_redistribution_allowed
             if redistribution_allowed is not None:
-                doc.redistribution_allowed = redistribution_allowed
+                db_doc.redistribution_allowed = redistribution_allowed
             if quarantine_reason is not None:
-                doc.quarantine_reason = quarantine_reason
+                db_doc.quarantine_reason = quarantine_reason
             if third_party_permission_status is not None:
-                doc.third_party_permission_status = third_party_permission_status
-            if third_party_permission_notes is not None:
-                doc.third_party_permission_notes = third_party_permission_notes
-            db.flush()
+                tp_val = third_party_permission_status.value if hasattr(third_party_permission_status, "value") else str(third_party_permission_status)
+                db_doc.third_party_permission_status = tp_val
+            if combined_notes is not None:
+                db_doc.third_party_permission_notes = combined_notes
+
+            if commit:
+                db.commit()
+                persistence_status = "COMMITTED_TO_DATABASE"
+            else:
+                db.flush()
+                persistence_status = "TRANSACTION_PENDING"
+
+            persisted_to_database = True
+            persistence_warning = None
 
     return {
         "url": url,
         "rights_reviewed_at": review_timestamp.isoformat(),
-        "rights_reviewer": str(reviewer).strip(),
+        "rights_reviewer": reviewer_clean,
+        "rights_evidence_url": str(rights_evidence_url).strip() if rights_evidence_url else (entry.rights_evidence_url if known_in_inventory else None),
+        "permission_reference": permission_reference,
+        "persisted_to_database": persisted_to_database,
+        "persistence_status": persistence_status,
+        "persistence_warning": persistence_warning,
         "status": "RECORDED",
     }
 

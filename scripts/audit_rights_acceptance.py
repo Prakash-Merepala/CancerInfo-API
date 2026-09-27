@@ -7,6 +7,7 @@ Truthfully reports:
 - Engineering implementation status
 - L004 final acceptance status
 - Counts across all required evidence and decision fields
+- Owner-approved eligible corpus vs unresolved decisions vs quarantined material
 - Active acceptance blockers (missing owner review, unsubmitted third-party permissions)
 """
 import sys
@@ -33,10 +34,12 @@ def main() -> int:
     print(f"  - With Owner Review Date:             {report['with_review_date']}/{report['total_candidate_documents']}")
     print(f"  - With Decision Owner / Reviewer:     {report['with_decision_owner']}/{report['total_candidate_documents']}")
     print("-" * 80)
-    print("PUBLICATION & QUARANTINE BREAKDOWN:")
-    print(f"  - ELIGIBLE:                           {report['eligible_count']}")
-    print(f"  - REVIEW_REQUIRED:                    {report['review_required_count']}")
-    print(f"  - PERMISSION_PENDING:                 {report['permission_pending_count']}")
+    print("VALIDATED CORPUS & DECISION STATUS BREAKDOWN:")
+    print(f"  - Owner-Approved Eligible Corpus:     {report['owner_approved_eligible_corpus_count']}")
+    print(f"  - Unresolved Candidate Decisions:     {report['unresolved_candidate_decisions_count']}")
+    print(f"  - Unresolved Permission Decisions:    {report['unresolved_permission_decisions_count']}")
+    print(f"  - Excluded / Quarantined Material:    {report['excluded_quarantined_documents_count']}")
+    print(f"  - Excluded / Untracked in Database:   {report['excluded_untracked_documents_count']}")
     print("-" * 80)
     print("THIRD-PARTY PERMISSION WORKFLOW:")
     print(f"  - Requests Actually Submitted:        {report['permission_requests_submitted']}")
@@ -56,7 +59,8 @@ def main() -> int:
         print("\nACTION REQUIRED BY REPOSITORY OWNER (PRAKASH):")
         print("  To transition from OPEN to ACCEPTED:")
         print("  1. Inspect each candidate URL for third-party images, diagrams, or proprietary tables.")
-        print("  2. Use record_owner_rights_review(url, reviewer='Jaya Prakash Merepala', ...) to finalize decisions.")
+        print("  2. Use record_owner_rights_review(url, reviewer='Jaya Prakash Merepala', db=session, commit=True, ...)")
+        print("     to durably finalize decisions in the database.")
         print("  3. Submit formal permission inquiry to WHO permissions committee for WHO fact sheets.")
         print("=" * 80)
 

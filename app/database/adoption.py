@@ -15,7 +15,7 @@ from app.database.migration_check import (
 from app.database.session import Base
 import app.models  # noqa: F401
 
-BASELINE_REVISION = "0002_document_rights_and_consensus_linkage"
+BASELINE_REVISION = "0002_document_rights"
 
 
 class SchemaParityError(Exception):

@@ -17,11 +17,12 @@ To maintain complete transparency and truthfulness in accordance with Mithra's r
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │  ENGINEERING IMPLEMENTATION STATUS: COMPLETE                                    │
-│  - Linear reversible Alembic migration (0002_document_rights_and_consensus_...) │
-│  - Exact document rights models, relationships, and validation engine           │
+│  - Linear reversible Alembic migration (0002_document_rights, <=32 chars)       │
+│  - Exact document rights models, relationships, and consolidated validator      │
 │  - 32-URL canonical rights registry & dynamic consensus citation linkage        │
+│  - Populated L003 transition tooling (scripts/transition_l004.py, repeat-safe)  │
 │  - API response schemas exposing document-level provenance and permissions      │
-│  - Full automated test suite: 88/88 tests passing                               │
+│  - Full automated test suite: 97/97 tests passing (22 rights, 24 migrations)    │
 ├────────────────────────────────────────────────────────────────────────────────┤
 │  L004 ACCEPTANCE STATUS: BLOCKED ON OWNER REVIEW (OPEN)                        │
 │  - 32 of 32 candidate documents have primary rights evidence URLs collected     │
@@ -96,21 +97,44 @@ In response to Mithra's review, third-party permission tracking has been hardene
 
 ---
 
-## 4. Deterministic Acceptance Audit & Workflow Tooling
+## 4. Deterministic Acceptance Audit & Operational Transition Tooling
 
-To ensure acceptance status cannot be fabricated or silently drifted, two new tools have been implemented:
+To ensure acceptance status cannot be fabricated or silently drifted, and to provide safe transitions for existing environments:
 
 1. **Acceptance Audit Engine (`app.ingestion.rights_inventory.audit_candidate_acceptance`)**:
    - Programmatically validates all 32 candidate URLs across evidence, review timestamp, decision owner, permissible use, attribution decision, publication decision, and third-party permission status.
    - Evaluates whether acceptance criteria are truthfully satisfied.
+   - Categorizes corpus:
+     - `owner_approved_eligible_corpus`: 0
+     - `unresolved_candidate_decisions`: 28 (quarantined under `REVIEW_REQUIRED`)
+     - `unresolved_permission_decisions`: 4 (quarantined under `PERMISSION_PENDING`)
+     - `excluded_quarantined_documents`: 4
+     - `excluded_untracked_documents`: 0
+   - Prevents submitted-but-unresolved permissions (`REQUESTED_AWAITING_RESPONSE`) from producing false acceptance.
    - Returns structured blockers and deficiency breakdowns.
 
-2. **Executable CLI Tool (`scripts/audit_rights_acceptance.py`)**:
+2. **Executable Acceptance Audit CLI (`scripts/audit_rights_acceptance.py`)**:
    - Run via: `python scripts/audit_rights_acceptance.py`
    - Deterministically prints candidate counts, breakdown, and active blockers.
 
-3. **Owner Review Workflow API (`record_owner_rights_review`)**:
-   - Enables Prakash to truthfully record his review decisions as they occur:
+3. **Controlled Transition Tool for Populated L003 Databases (`app/database/transition.py` & `scripts/transition_l004.py`)**:
+   - Upgrades populated L003 databases to L004 schema without reseeding or overwriting existing content, quotes, or attributions.
+   - Atomic, transactional, and repeat-safe (idempotent).
+   - CLI usage:
+     ```bash
+     # Dry-run validation (inspects database without mutations):
+     python scripts/transition_l004.py --dry-run
+
+     # Execute repeat-safe atomic transition:
+     python scripts/transition_l004.py
+     ```
+
+4. **Durable & Auditable Owner Review API (`record_owner_rights_review`)**:
+   - Validates candidate URL targets against registry (rejects unknown targets).
+   - Validates `rights_evidence_url` format (requires `http://` or `https://`).
+   - Supports permission reference tracking (`permission_reference`).
+   - Supports transactional persistence (`db=session, commit=True` commits to DB; `commit=False` flushes within calling transaction).
+   - Usage example:
      ```python
      from app.ingestion.rights_inventory import record_owner_rights_review
 
@@ -118,37 +142,71 @@ To ensure acceptance status cannot be fabricated or silently drifted, two new to
          url="https://www.cancer.gov/types/breast",
          reviewer="Jaya Prakash Merepala",
          reviewed_at=datetime.utcnow(),
-         publication_status="REVIEW_REQUIRED", # or ELIGIBLE if cleared
+         publication_status="REVIEW_REQUIRED",  # or ELIGIBLE if cleared
+         rights_evidence_url="https://www.cancer.gov/policies/copyright-reuse",
          permissible_use="U.S. Government work verified free of third-party assets",
+         db=db_session,
+         commit=True,
      )
      ```
 
 ---
 
-## 5. Verification & Test Evidence (88 / 88 Tests Passing)
+## 5. Verification & Test Evidence (97 / 97 Tests Passing)
 
+### Test Suite Execution:
 ```text
+============================= test session starts ==============================
+platform darwin -- Python 3.11.16, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/prakash/VS Code/CancerInfo-API
+collected 97 items
+
 tests/test_admin_and_pipeline.py ....                                    [  4%]
-tests/test_bootstrap.py ..........                                       [ 15%]
-tests/test_cancers.py .......                                            [ 23%]
-tests/test_consensus_facts.py ......                                     [ 30%]
-tests/test_document_rights.py ..............                             [ 46%]
-tests/test_health.py ...                                                 [ 50%]
-tests/test_migrations.py .......................                         [ 76%]
-tests/test_neon_clean_guard.py .......                                   [ 84%]
-tests/test_search.py ....                                                [ 88%]
+tests/test_bootstrap.py ..........                                       [ 14%]
+tests/test_cancers.py .......                                            [ 21%]
+tests/test_consensus_facts.py ......                                     [ 27%]
+tests/test_document_rights.py ......................                     [ 50%]
+tests/test_health.py ...                                                 [ 53%]
+tests/test_migrations.py ........................                        [ 78%]
+tests/test_neon_clean_guard.py .......                                   [ 85%]
+tests/test_search.py ....                                                [ 89%]
 tests/test_sources.py .....                                              [ 94%]
 tests/test_taxonomy_and_normalization.py .....                           [100%]
 
-======================== 88 passed, 1 warning in 4.77s =========================
+======================== 97 passed, 1 warning in 5.11s =========================
 ```
+
+### Environment Verification Breakdown:
+
+1. **Local SQLite Test Environment**:
+   - All 97 tests pass cleanly, including:
+     - 22 document rights and transition tests in `tests/test_document_rights.py`.
+     - 24 migration and schema tests in `tests/test_migrations.py`.
+     - Populated upgrade and transition test (`test_populated_l003_database_upgrade_and_transition`).
+     - Legacy long identifier remapping test (`test_legacy_long_revision_identifier_remapped_transparently`).
+     - Consolidated publication eligibility fail-closed tests (`test_consolidated_publication_eligibility_rejects_unknown_missing_and_inconsistent`).
+     - Hardened acceptance audit test (`test_audit_candidate_acceptance_submitted_permissions_do_not_produce_acceptance`).
+     - Durable owner review records test (`test_owner_review_records_durable_and_auditable`).
+
+2. **PostgreSQL CI Run 36301697756 Resolution**:
+   - **Root Cause**: Alembic stores revision IDs in the `alembic_version` table with column `version_num VARCHAR(32)`. The original L004 migration identifier `0002_document_rights_and_consensus_linkage` had 43 characters, causing PostgreSQL to reject it with `StringDataRightTruncation: value too long for type character varying(32)`. (SQLite does not enforce `VARCHAR` lengths, which is why it passed in SQLite but failed in PostgreSQL CI).
+   - **Resolution**: Renamed migration script and revision ID to `0002_document_rights` (20 characters <= 32).
+   - **Backward Compatibility**: Any disposable SQLite databases previously stamped with `0002_document_rights_and_consensus_linkage` are automatically remapped to `0002_document_rights` via `LEGACY_REVISION_ALIASES` in `app/database/migration_check.py` and transparent connection probe in `alembic/env.py`.
+
+3. **Skipped Checks & Out-of-Scope Items**:
+   - **Production Neon PostgreSQL Database**: Direct connections were strictly prohibited and not executed.
+   - **Live Scraping & Clinical Fact Verification**: Out of scope for CIAPI-L004 rights architecture.
+   - **Universal Publication-Response Gate**: Out of scope for CIAPI-L004; designated for CIAPI-L008.
+
+4. **Unresolved Owner Review**:
+   - As truthfully reported, **0 of 32** candidate documents have owner review dates or reviewer signatures. This remains an active blocker for repository owner (Prakash) to complete.
 
 ---
 
 ## 6. Open Acceptance Blockers for Repository Owner (Prakash)
 
-The following items are required to close L004 acceptance:
+The following items are required from Prakash to close L004 acceptance:
 
-1. **Owner Review Dates**: Prakash must inspect the 32 candidate URLs and supply the exact review timestamp (`rights_reviewed_at`).
-2. **Decision Owner Identity**: Prakash must sign the review records with his name/ID (`rights_reviewer`).
-3. **WHO Permission Request**: Submit formal permission inquiry to the WHO permissions committee requesting an API redistribution waiver for the 4 WHO fact sheets, updating their status to `REQUESTED_AWAITING_RESPONSE`.
+1. **Perform Item-Level Inspection**: Inspect each of the 32 candidate URLs on the live web to check for embedded third-party diagrams, licensed medical illustrations, proprietary drug monographs, or external copyright notices.
+2. **Record Review Decisions Durably**: Sign off with name and review timestamp using `record_owner_rights_review(..., db=session, commit=True)` or updating `RIGHTS_INVENTORY`.
+3. **WHO Commercial Waiver**: Submit a formal permission request to the WHO permissions committee for the 4 WHO fact sheets, requesting a commercial API redistribution waiver. Update their status to `REQUESTED_AWAITING_RESPONSE` once submitted.

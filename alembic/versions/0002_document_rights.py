@@ -1,6 +1,6 @@
 """document_rights_and_consensus_linkage
 
-Revision ID: 0002_document_rights_and_consensus_linkage
+Revision ID: 0002_document_rights
 Revises: 0001_initial_schema
 Create Date: 2026-09-27 01:00:00.000000
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0002_document_rights_and_consensus_linkage'
+revision: str = '0002_document_rights'
 down_revision: Union[str, Sequence[str], None] = '0001_initial_schema'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

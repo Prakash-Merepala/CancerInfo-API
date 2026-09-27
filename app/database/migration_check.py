@@ -40,11 +40,29 @@ def get_head_revision() -> str:
     return head
 
 
+LEGACY_REVISION_ALIASES = {
+    "0002_document_rights_and_consensus_linkage": "0002_document_rights",
+}
+
+
 def get_current_revision(engine: Engine) -> Optional[str]:
     """Inspect the connected database and return its current Alembic version_num, or None."""
     with engine.connect() as conn:
         ctx = MigrationContext.configure(conn)
-        return ctx.get_current_revision()
+        rev = ctx.get_current_revision()
+        if rev in LEGACY_REVISION_ALIASES:
+            canonical = LEGACY_REVISION_ALIASES[rev]
+            # Transparently remap disposable SQLite/dev databases stamped with legacy long revision
+            try:
+                conn.execute(
+                    text("UPDATE alembic_version SET version_num = :canonical WHERE version_num = :legacy"),
+                    {"canonical": canonical, "legacy": rev},
+                )
+                conn.commit()
+            except Exception:
+                pass
+            return canonical
+        return rev
 
 
 def verify_database_schema_at_head(engine: Engine) -> str:

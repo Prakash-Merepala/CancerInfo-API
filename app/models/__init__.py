@@ -177,27 +177,11 @@ class SourceDocument(Base):
     def is_publication_eligible(self) -> bool:
         """
         Evaluate fail-closed document publication eligibility.
-        Requires explicit ELIGIBLE status, non-empty evidence URL, review metadata,
-        and commercial/redistribution clearance without quarantine reason.
-        Source-level flags NEVER confer eligibility to an individual document.
+        Delegates strictly to the consolidated evaluate_publication_eligibility engine.
         """
-        if self.publication_status != PublicationStatus.ELIGIBLE.value:
-            return False
-        if not self.rights_evidence_url:
-            return False
-        if self.rights_reviewed_at is None:
-            return False
-        if not self.rights_reviewer:
-            return False
-        if not self.commercial_redistribution_allowed:
-            return False
-        if not self.redistribution_allowed:
-            return False
-        if self.quarantine_reason:
-            return False
-        if self.third_party_permission_status not in (None, "", "NOT_APPLICABLE", "GRANTED"):
-            return False
-        return True
+        from app.core.rights_validation import evaluate_publication_eligibility
+        is_eligible, _ = evaluate_publication_eligibility(self)
+        return is_eligible
 
     def assert_publication_eligible(self) -> None:
         """Raise PublicationEligibilityError if document is not eligible."""

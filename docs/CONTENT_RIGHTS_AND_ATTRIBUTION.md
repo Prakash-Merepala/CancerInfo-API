@@ -216,16 +216,34 @@ To transition an individual document from `REVIEW_REQUIRED` to `ELIGIBLE`:
 3. **Statutory Exemption**: Confirm whether the content was authored by civil servants in their official duties (e.g., 17 U.S.C. § 105 for U.S. Federal Government, Crown Copyright OGL v3.0 for NHS England).
 4. **Attribution Formulation**: Draft an accurate attribution string (e.g., *"Source: National Cancer Institute (cancer.gov). Public domain."*).
 5. **Database / Inventory Update**:
-   Update `app/ingestion/rights_inventory.py` with:
-   - `publication_status = PublicationStatus.ELIGIBLE`
-   - `rights_evidence_url = "<authoritative policy URL>"`
-   - `rights_reviewed_at = datetime(2026, 9, 27, tzinfo=timezone.utc)`
-   - `rights_reviewer = "<auditor name>"`
-   - `redistribution_allowed = True`
-   - `commercial_redistribution_allowed = True`
-   - `quarantine_reason = None`
-   - `third_party_permission_status = "NOT_APPLICABLE"` (or `"GRANTED"`)
-6. **Seed Execution**: Run `seed_database(db)` or execute an administrative rights update to write the decision to `source_documents`.
+   Update `app/ingestion/rights_inventory.py` or use the durable review API:
+   ```python
+   from app.ingestion.rights_inventory import record_owner_rights_review
+
+   record_owner_rights_review(
+       url="<candidate URL>",
+       reviewer="<auditor name>",
+       reviewed_at=datetime.utcnow(),
+       publication_status="ELIGIBLE",
+       rights_evidence_url="<authoritative policy URL>",
+       permissible_use="<justification>",
+       commercial_redistribution_allowed=True,
+       redistribution_allowed=True,
+       quarantine_reason=None,
+       third_party_permission_status="NOT_APPLICABLE",
+       db=db_session,
+       commit=True,
+   )
+   ```
+6. **Populated Database Transition Execution**:
+   For existing populated environments, run the transactional transition tool instead of reseeding or bootstrapping (which can overwrite quotes, attributions, or content history):
+   ```bash
+   # 1. Validate changes without mutating records:
+   python scripts/transition_l004.py --dry-run
+
+   # 2. Apply repeat-safe transition in a single atomic transaction:
+   python scripts/transition_l004.py
+   ```
 
 ---
 

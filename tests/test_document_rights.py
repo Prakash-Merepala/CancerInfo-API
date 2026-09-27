@@ -43,6 +43,7 @@ from app.core.rights_validation import (
 from app.database.bootstrap import execute_bootstrap
 from app.database.migration_check import get_alembic_config, get_current_revision, set_alembic_url_safe
 from app.ingestion.rights_inventory import (
+    DocumentRightsDecision,
     RIGHTS_INVENTORY,
     audit_candidate_acceptance,
     export_rights_audit_report,
@@ -382,9 +383,9 @@ def test_l004_migration_upgrade_and_downgrade(tmp_path):
         ))
         conn.commit()
 
-    # 2. Upgrade to L004 head (0002_document_rights_and_consensus_linkage)
+    # 2. Upgrade to L004 head (0002_document_rights)
     command.upgrade(cfg, "head")
-    assert get_current_revision(engine) == "0002_document_rights_and_consensus_linkage"
+    assert get_current_revision(engine) == "0002_document_rights"
 
     # Verify existing document received fail-closed server_default 'REVIEW_REQUIRED'
     with sessionmaker(bind=engine)() as s:
@@ -406,7 +407,7 @@ def test_l004_migration_upgrade_and_downgrade(tmp_path):
 
     # 4. Re-upgrade to head
     command.upgrade(cfg, "head")
-    assert get_current_revision(engine) == "0002_document_rights_and_consensus_linkage"
+    assert get_current_revision(engine) == "0002_document_rights"
     inspector = inspect(engine)
     sd_cols = {c["name"] for c in inspector.get_columns("source_documents")}
     assert "publication_status" in sd_cols
@@ -531,4 +532,257 @@ def test_owner_review_workflow_truthful_recording(test_db_session):
     ).one()
     assert doc.rights_reviewer == "Jaya Prakash Merepala"
     assert doc.rights_reviewed_at is not None
+
+
+def test_consolidated_publication_eligibility_rejects_unknown_missing_and_inconsistent():
+    """
+    Issue 3: Proves publication eligibility rejects unknown or missing third-party decisions
+    and inconsistent evidence fail-closed.
+    """
+    doc = SourceDocument(
+        id="test-doc-audit",
+        source_id="nci-us",
+        original_url="https://example.gov/doc",
+        title="Test Doc",
+        country_code="US",
+        content_hash="hash",
+        publication_status=PublicationStatus.ELIGIBLE.value,
+        rights_evidence_url="https://example.gov/rights",
+        rights_reviewed_at=datetime.utcnow(),
+        rights_reviewer="Reviewer",
+        redistribution_allowed=True,
+        commercial_redistribution_allowed=True,
+        third_party_permission_status=ThirdPartyPermissionStatus.NOT_APPLICABLE.value,
+    )
+    # Valid baseline
+    assert doc.is_publication_eligible() is True
+
+    # 1. Missing third party decision
+    doc.third_party_permission_status = None
+    assert doc.is_publication_eligible() is False
+    doc.third_party_permission_status = ""
+    assert doc.is_publication_eligible() is False
+
+    # 2. Unknown third party decision
+    doc.third_party_permission_status = "UNKNOWN_CUSTOM_DECISION"
+    assert doc.is_publication_eligible() is False
+
+    # 3. Inconsistent evidence: commercial allowed while general redistribution disallowed
+    doc.third_party_permission_status = "NOT_APPLICABLE"
+    doc.redistribution_allowed = False
+    doc.commercial_redistribution_allowed = True
+    assert doc.is_publication_eligible() is False
+
+    # 4. Inconsistent evidence: ELIGIBLE with quarantine reason
+    doc.redistribution_allowed = True
+    doc.commercial_redistribution_allowed = True
+    doc.quarantine_reason = "Quarantined for audit"
+    assert doc.is_publication_eligible() is False
+    doc.quarantine_reason = None
+
+    # 5. Invalid evidence URL (not http/https)
+    doc.rights_evidence_url = "ftp://invalid-scheme.gov/rights"
+    assert doc.is_publication_eligible() is False
+    doc.rights_evidence_url = "https://example.gov/rights"
+
+    # 6. Inconsistent attribution
+    doc.attribution_required = True
+    doc.attribution_text = ""
+    assert doc.is_publication_eligible() is False
+    doc.attribution_text = "Source: NCI"
+    assert doc.is_publication_eligible() is True
+
+
+def test_audit_candidate_acceptance_submitted_permissions_do_not_produce_acceptance():
+    """
+    Issue 4: Submitted-but-unresolved permissions must not produce false acceptance.
+    Distinguishes owner-approved eligible corpus from unresolved decisions.
+    """
+    report = audit_candidate_acceptance()
+    assert report["total_candidate_documents"] == 32
+    assert report["owner_approved_eligible_corpus_count"] == 0
+    assert report["unresolved_candidate_decisions_count"] == 28
+    assert report["unresolved_permission_decisions_count"] == 4
+    assert report["l004_acceptance_satisfied"] is False
+    assert any("REQUIRED_NOT_SUBMITTED" in b for b in report["blockers"])
+
+    # Simulate submitting WHO permissions (REQUESTED_AWAITING_RESPONSE)
+    simulated_docs = []
+    for d in list_rights_inventory():
+        d_dict = d.to_dict()
+        if d_dict["third_party_permission_status"] == "REQUIRED_NOT_SUBMITTED":
+            d_dict["third_party_permission_status"] = "REQUESTED_AWAITING_RESPONSE"
+        # Simulate populated review dates and reviewers
+        d_dict["rights_reviewed_at"] = datetime.utcnow()
+        d_dict["rights_reviewer"] = "Jaya Prakash Merepala"
+        simulated_docs.append(DocumentRightsDecision(**d_dict))
+
+    sim_report = audit_candidate_acceptance(records=simulated_docs)
+    assert sim_report["permission_requests_submitted"] == 4
+    assert sim_report["permission_required_not_submitted"] == 0
+    # Must STILL be rejected with open blocker!
+    assert sim_report["l004_acceptance_satisfied"] is False
+    assert any("REQUESTED_AWAITING_RESPONSE" in b for b in sim_report["blockers"])
+
+
+def test_owner_review_records_durable_and_auditable(test_db_session):
+    """
+    Issue 5: Make owner review records durable and auditable.
+    Reject unknown targets, document transaction persistence, and support exact references.
+    """
+    # 1. Reject unknown target
+    with pytest.raises(ValueError, match="Unknown target document URL"):
+        record_owner_rights_review(
+            "https://random-unknown-domain.org/nonexistent",
+            reviewer="Prakash",
+            db=test_db_session,
+        )
+
+    # 2. Reject invalid rights evidence URL
+    with pytest.raises(ValueError, match="Invalid rights evidence URL"):
+        record_owner_rights_review(
+            "https://www.cancer.gov/types/breast",
+            reviewer="Prakash",
+            rights_evidence_url="not-a-valid-url",
+            db=test_db_session,
+        )
+
+    # 3. Test in-memory only (without db) reports transient status
+    res_mem = record_owner_rights_review(
+        "https://www.cancer.gov/types/breast",
+        reviewer="Prakash",
+        db=None,
+    )
+    assert res_mem["persisted_to_database"] is False
+    assert res_mem["persistence_status"] == "TRANSIENT_MEMORY_ONLY"
+    assert "Review recorded in-memory only" in res_mem["persistence_warning"]
+
+    # 4. Test database transaction persistence with exact permission reference
+    res_db = record_owner_rights_review(
+        "https://www.cancer.gov/types/breast",
+        reviewer="Jaya Prakash Merepala",
+        rights_evidence_url="https://www.cancer.gov/policies/copyright-reuse",
+        permission_reference="NCI-REUSE-AUDIT-2026-001",
+        third_party_permission_notes="Verified no external illustrations",
+        db=test_db_session,
+        commit=True,
+    )
+    assert res_db["persisted_to_database"] is True
+    assert res_db["persistence_status"] == "COMMITTED_TO_DATABASE"
+    assert res_db["permission_reference"] == "NCI-REUSE-AUDIT-2026-001"
+
+    # Verify db record has combined permission reference notes
+    db_doc = test_db_session.query(SourceDocument).filter_by(
+        original_url="https://www.cancer.gov/types/breast"
+    ).one()
+    assert "NCI-REUSE-AUDIT-2026-001" in db_doc.third_party_permission_notes
+
+
+def test_populated_l003_database_upgrade_and_transition(tmp_path):
+    """
+    Issue 2: Controlled, transactional, repeat-safe transition for populated L003 databases.
+    Populates document rights records and consensus citation links without reseeding or overwriting
+    existing quotes, attribution, history or content. Tests populated upgrades.
+    """
+    from alembic import command
+    from app.database.migration_check import get_alembic_config, get_current_revision
+    from app.database.transition import transition_populated_l003_database
+    from app.models import Cancer, ConsensusFact, ConsensusFactSource, ContentRecord, Source, SourceDocument
+
+    db_path = tmp_path / "populated_l003.db"
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url)
+
+    cfg = get_alembic_config()
+    cfg.set_main_option("sqlalchemy.url", db_url)
+
+    # 1. Upgrade to L003 schema (0001_initial_schema)
+    command.upgrade(cfg, "0001_initial_schema")
+    assert get_current_revision(engine) == "0001_initial_schema"
+
+    # 2. Populate realistic L003 data using raw SQL (pre-L004 schema)
+    with engine.connect() as conn:
+        conn.execute(text(
+            "INSERT INTO sources (id, organization_name, source_name, base_url, country_code, "
+            "source_type, trust_tier, authority_type, license_type, license_status, active) "
+            "VALUES ('nci-us', 'National Cancer Institute', 'NCI', 'https://www.cancer.gov', 'US', 'government', "
+            "'Tier 1 - Primary Authoritative', 'GOVERNMENT', 'U.S. Public Domain', 'APPROVED', 1)"
+        ))
+        conn.execute(text(
+            "INSERT INTO cancers (id, canonical_name, slug) VALUES ('cancer-breast', 'Breast Cancer', 'breast-cancer')"
+        ))
+        conn.execute(text(
+            "INSERT INTO source_documents (id, source_id, original_url, title, language, country_code, "
+            "jurisdiction_scope, content_hash, processing_status, canonical_cancer_id) "
+            "VALUES ('doc-existing-l003', 'nci-us', 'https://www.cancer.gov/types/breast', "
+            "'Breast Cancer Overview - NCI', 'en', 'US', 'COUNTRY', 'sha256-original-content-l003', "
+            "'PROCESSED', 'cancer-breast')"
+        ))
+        conn.execute(text(
+            "INSERT INTO content_records (id, canonical_cancer_id, category, content) "
+            "VALUES ('cr-existing-l003', 'cancer-breast', 'symptoms', "
+            "'Original raw clinical text that must remain intact.')"
+        ))
+        conn.execute(text(
+            "INSERT INTO consensus_facts (id, cancer_id, category, fact_key, title, clinical_detail, active) "
+            "VALUES ('fact-breast-1', 'cancer-breast', 'symptoms', 'lump_in_breast', 'Lump in breast', "
+            "'New lump in the breast or underarm is a primary symptom.', 1)"
+        ))
+        conn.execute(text(
+            "INSERT INTO consensus_fact_sources (id, consensus_fact_id, source_id, country_code, "
+            "quote_snippet, attribution_text, source_url) "
+            "VALUES ('cfs-breast-1', 'fact-breast-1', 'nci-us', 'US', "
+            "'Lump or swelling in the breast or armpit.', 'Quoted from NCI Breast Cancer page 2026.', "
+            "'https://www.cancer.gov/types/breast')"
+        ))
+        conn.commit()
+
+    # 3. Upgrade schema to L004 (0002_document_rights)
+    command.upgrade(cfg, "head")
+    assert get_current_revision(engine) == "0002_document_rights"
+
+    # Verify consensus citation source_document_id is currently null
+    with sessionmaker(bind=engine)() as s:
+        cfs_check = s.query(ConsensusFactSource).filter_by(id="cfs-breast-1").one()
+        assert cfs_check.source_document_id is None
+
+    # 4. Execute transition in DRY-RUN mode
+    dry_result = transition_populated_l003_database(engine, dry_run=True)
+    assert dry_result["status"] == "VALIDATED_NO_MUTATION"
+    assert dry_result["mode"] == "DRY_RUN"
+    assert dry_result["citations_to_link"] == 1
+    # Verify no mutation was applied in dry run
+    with sessionmaker(bind=engine)() as s:
+        cfs_check = s.query(ConsensusFactSource).filter_by(id="cfs-breast-1").one()
+        assert cfs_check.source_document_id is None
+
+    # 5. Apply transition in single transaction
+    apply_result = transition_populated_l003_database(engine, dry_run=False)
+    assert apply_result["status"] == "SUCCESS"
+    assert apply_result["mode"] == "APPLY"
+    assert apply_result["citations_linked"] == 1
+
+    # 6. Verify data integrity and preservation
+    with sessionmaker(bind=engine)() as s:
+        doc_check = s.query(SourceDocument).filter_by(original_url="https://www.cancer.gov/types/breast").one()
+        # Rights fields populated
+        assert doc_check.rights_evidence_url == "https://www.cancer.gov/policies/copyright-reuse"
+        assert doc_check.publication_status == "REVIEW_REQUIRED"
+        # Original content and quote strictly preserved
+        assert doc_check.content_hash == "sha256-original-content-l003"
+
+        cfs_check = s.query(ConsensusFactSource).filter_by(id="cfs-breast-1").one()
+        assert cfs_check.source_document_id == doc_check.id
+        assert cfs_check.quote_snippet == "Lump or swelling in the breast or armpit."
+        assert cfs_check.attribution_text == "Quoted from NCI Breast Cancer page 2026."
+
+        cr_check = s.query(ContentRecord).filter_by(id="cr-existing-l003").one()
+        assert cr_check.content == "Original raw clinical text that must remain intact."
+
+    # 7. Repeat-safe execution (idempotency test)
+    repeat_result = transition_populated_l003_database(engine, dry_run=False)
+    assert repeat_result["status"] == "SUCCESS"
+    assert repeat_result["citations_linked"] == 0
+    assert repeat_result["citations_already_linked"] == 1
+    engine.dispose()
 

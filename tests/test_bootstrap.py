@@ -41,7 +41,8 @@ from app.database.manifest import (
     compare_current_model_manifests,
     verify_foreign_key_integrity,
 )
-from app.database.migration_check import get_alembic_config
+from app.database.migration_check import get_alembic_config, set_alembic_url_safe
+from db_support import disposable_postgres
 from app.models import (
     Cancer,
     CancerAlias,
@@ -56,43 +57,6 @@ from app.models import (
 )
 
 
-def assert_safe_test_database(db_url: str) -> None:
-    """
-    Safeguard: Verifies that destructive test setup (schema dropping/wiping)
-    is NEVER run against an owner's Neon, production, or remote cloud database.
-    Only permitted on local SQLite or local/container PostgreSQL test instances.
-    """
-    if db_url.startswith("sqlite"):
-        return
-
-    from sqlalchemy.engine.url import make_url
-    url = make_url(db_url)
-    host = (url.host or "").lower()
-
-    # 1. Strictly forbid remote cloud databases
-    forbidden_cloud = ["neon.tech", "aws", "rds", "render.com", "azure", "supabase", "google"]
-    for pattern in forbidden_cloud:
-        if pattern in host:
-            raise RuntimeError(
-                f"DESTRUCTIVE SAFEGUARD BLOCKED: Test fixture targeted remote database '{host}'. "
-                f"Destructive schema resets are strictly forbidden on remote/cloud databases!"
-            )
-
-    # 2. Require host to be localhost / 127.0.0.1 / postgres container
-    allowed_hosts = ["localhost", "127.0.0.1", "postgres", ""]
-    if host not in allowed_hosts:
-        raise RuntimeError(
-            f"DESTRUCTIVE SAFEGUARD BLOCKED: Host '{host}' is not a local test host ({allowed_hosts})."
-        )
-
-    # 3. Require database name to contain 'test' or 'pytest'
-    dbname = (url.database or "").lower()
-    if "test" not in dbname and "pytest" not in dbname:
-        raise RuntimeError(
-            f"DESTRUCTIVE SAFEGUARD BLOCKED: Database name '{dbname}' does not contain 'test' or 'pytest'."
-        )
-
-
 def get_test_dialects():
     dialects = ["sqlite"]
     if os.getenv("POSTGRES_TEST_URL"):
@@ -102,24 +66,69 @@ def get_test_dialects():
 
 @pytest.fixture(params=get_test_dialects())
 def migrated_db(request, tmp_path):
-    """Provides a fresh, temporary migrated database for bootstrap testing (SQLite or PostgreSQL)."""
-    dialect = request.param
-    if dialect == "postgres":
-        pg_url = os.environ["POSTGRES_TEST_URL"]
-        assert_safe_test_database(pg_url)
-        engine = create_engine(pg_url)
-        with engine.begin() as conn:
-            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"))
-        db_url = pg_url
-    else:
-        db_file = tmp_path / f"boot_test_{os.urandom(4).hex()}.db"
-        db_url = f"sqlite:///{db_file}"
+    from contextlib import nullcontext
+    target = (disposable_postgres(os.environ["POSTGRES_TEST_URL"])
+              if request.param == "postgres"
+              else nullcontext(f"sqlite:///{tmp_path / 'bootstrap_test.db'}"))
+    with target as db_url:
         engine = create_engine(db_url)
+        try:
+            cfg = get_alembic_config()
+            set_alembic_url_safe(cfg, db_url)
+            command.upgrade(cfg, "head")
+            yield engine
+        finally:
+            engine.dispose()
 
-    cfg = get_alembic_config()
-    cfg.set_main_option("sqlalchemy.url", db_url)
-    command.upgrade(cfg, "head")
-    return engine
+
+def test_serving_and_fixture_ingestion_share_migrated_database(migrated_db):
+    """Exercise the real pipeline and API with a local fixture, never external HTTP."""
+    execute_bootstrap(migrated_db)
+    script = '''
+import asyncio
+from unittest.mock import AsyncMock, patch
+from fastapi.testclient import TestClient
+from app.database.session import SessionLocal, engine
+from app.database.manifest import capture_current_model_manifest, compare_current_model_manifests
+from app.ingestion.pipeline import run_ingestion_for_source
+from app.sources.adapters.nci import NCIAdapter
+from app.main import app
+
+url = "https://example.invalid/l003-fixture"
+adapter = NCIAdapter()
+adapter.discover_urls = AsyncMock(return_value=[{
+    "url": url, "cancer_slug": "l003-fixture", "source_cancer_name": "L003 Fixture"
+}])
+adapter.fetch_url = AsyncMock(side_effect=AssertionError("External HTTP forbidden"))
+with patch("app.ingestion.pipeline.get_adapter", return_value=adapter):
+    with SessionLocal() as session:
+        result = asyncio.run(run_ingestion_for_source("nci-us", session, mock_payloads={
+            url: "<h1>L003 Fixture</h1><h2>Symptoms</h2><p>Local validation fixture only.</p>"
+        }))
+assert result["status"] == "SUCCESS", result
+assert result["records_created"] == 1, result
+assert result["parser_failures"] == 0, result
+adapter.fetch_url.assert_not_called()
+before = capture_current_model_manifest(engine)
+assert before["row_counts"]["ingestion_jobs"] > 0
+assert not app.dependency_overrides
+for attempt in range(2):
+    with TestClient(app) as client:
+        assert client.get("/v1/health").status_code == 200
+        response = client.get("/v1/cancers/l003-fixture")
+        assert response.status_code == 200, response.text
+        assert "L003 Fixture" in response.text
+    compare_current_model_manifests(before, capture_current_model_manifest(engine))
+print("INGESTION_SERVING_RESTART_OK")
+'''
+    env = os.environ.copy()
+    env.update(DATABASE_URL=migrated_db.url.render_as_string(hide_password=False),
+               ENVIRONMENT="production" if migrated_db.dialect.name == "postgresql" else "development",
+               CHECK_MIGRATIONS_ON_STARTUP="true")
+    result = subprocess.run([sys.executable, "-c", script], env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "INGESTION_SERVING_RESTART_OK" in result.stdout
 
 
 def test_controlled_bootstrap_creates_expected_data(migrated_db):

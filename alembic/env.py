@@ -11,7 +11,7 @@ import app.models  # noqa: F401
 
 config = context.config
 
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.file_config.has_section("loggers"):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

@@ -59,17 +59,16 @@ def capture_current_model_manifest(engine: Engine) -> Dict[str, Any]:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
 
+    missing = set(CURRENT_MODEL_TABLES) - existing_tables
+    if missing:
+        raise RuntimeError(f"Cannot capture complete manifest; missing tables: {sorted(missing)}")
+
     manifest_tables: Dict[str, List[Dict[str, Any]]] = {}
     row_counts: Dict[str, int] = {}
     total_rows = 0
 
     with engine.connect() as conn:
         for tbl in CURRENT_MODEL_TABLES:
-            if tbl not in existing_tables:
-                manifest_tables[tbl] = []
-                row_counts[tbl] = 0
-                continue
-
             # Query all columns ordered by primary key id
             result = conn.execute(text(f"SELECT * FROM {tbl} ORDER BY id"))
             columns = list(result.keys())
@@ -132,6 +131,9 @@ def verify_foreign_key_integrity(engine: Engine) -> Dict[str, Any]:
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    missing = set(CURRENT_MODEL_TABLES) - existing_tables
+    if missing:
+        raise RuntimeError(f"Cannot verify integrity; missing tables: {sorted(missing)}")
     fks_checked = 0
     violations: List[str] = []
 

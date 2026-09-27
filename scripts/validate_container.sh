@@ -100,7 +100,11 @@ echo "PASSED (${PY_VER})."
 
 # F: Verify OpenAPI generation inside image
 echo -n "  - Checking OpenAPI spec generation inside image... "
-docker run --rm "$IMAGE_NAME" python -c "from app.main import app; spec = app.openapi(); assert len(spec['paths']) > 0; print(f'OK ({len(spec[\"paths\"])} paths)')"
+docker run --rm \
+    -e ENVIRONMENT=production \
+    -e DATABASE_URL="postgresql+psycopg2://openapi_check:openapi_check@127.0.0.1:5432/openapi_check" \
+    "$IMAGE_NAME" \
+    python -c "from app.main import app; spec = app.openapi(); assert len(spec['paths']) > 0; print(f'OK ({len(spec[\"paths\"])} paths)')"
 
 # -----------------------------------------------------------------------------
 # 2. Test Default Port (3000) Boot, Migrations, Bootstrap & HTTP Endpoints

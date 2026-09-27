@@ -43,6 +43,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
 from app.database.adoption import SchemaParityError, adopt_existing_schema, verify_schema_parity
@@ -57,44 +58,10 @@ from app.database.migration_check import (
     verify_database_schema_at_head,
 )
 from app.database.session import Base
+from db_support import assert_safe_test_database, disposable_postgres, pg_tool
+from app.database.manifest import CURRENT_MODEL_TABLES, verify_foreign_key_integrity
+from app.models import IngestionJob
 from app.models import Cancer, Source
-
-
-def assert_safe_test_database(db_url: str) -> None:
-    """
-    Safeguard: Verifies that destructive test setup (schema dropping/wiping)
-    is NEVER run against an owner's Neon, production, or remote cloud database.
-    Only permitted on local SQLite or local/container PostgreSQL test instances.
-    """
-    if db_url.startswith("sqlite"):
-        return
-
-    from sqlalchemy.engine.url import make_url
-    url = make_url(db_url)
-    host = (url.host or "").lower()
-
-    # 1. Strictly forbid remote cloud databases
-    forbidden_cloud = ["neon.tech", "aws", "rds", "render.com", "azure", "supabase", "google"]
-    for pattern in forbidden_cloud:
-        if pattern in host:
-            raise RuntimeError(
-                f"DESTRUCTIVE SAFEGUARD BLOCKED: Test fixture targeted remote database '{host}'. "
-                f"Destructive schema resets are strictly forbidden on remote/cloud databases!"
-            )
-
-    # 2. Require host to be localhost / 127.0.0.1 / postgres container
-    allowed_hosts = ["localhost", "127.0.0.1", "postgres", ""]
-    if host not in allowed_hosts:
-        raise RuntimeError(
-            f"DESTRUCTIVE SAFEGUARD BLOCKED: Host '{host}' is not a local test host ({allowed_hosts})."
-        )
-
-    # 3. Require database name to contain 'test' or 'pytest'
-    dbname = (url.database or "").lower()
-    if "test" not in dbname and "pytest" not in dbname:
-        raise RuntimeError(
-            f"DESTRUCTIVE SAFEGUARD BLOCKED: Database name '{dbname}' does not contain 'test' or 'pytest'."
-        )
 
 
 def get_test_dialects():
@@ -107,20 +74,11 @@ def get_test_dialects():
 
 @pytest.fixture(params=get_test_dialects())
 def test_db_url(request, tmp_path):
-    """Provides an isolated database URL for testing, supporting both SQLite and PostgreSQL."""
-    dialect = request.param
-    if dialect == "postgres":
-        pg_url = os.environ["POSTGRES_TEST_URL"]
-        assert_safe_test_database(pg_url)
-        # Wipe public schema in PostgreSQL to guarantee clean, isolated database
-        engine = create_engine(pg_url)
-        with engine.begin() as conn:
-            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"))
-        engine.dispose()
-        return pg_url
+    if request.param == "postgres":
+        with disposable_postgres(os.environ["POSTGRES_TEST_URL"]) as url:
+            yield url
     else:
-        db_file = tmp_path / f"mig_test_{os.urandom(4).hex()}.db"
-        return f"sqlite:///{db_file}"
+        yield f"sqlite:///{tmp_path / 'migration_test.db'}"
 
 
 @pytest.fixture
@@ -468,82 +426,52 @@ def test_pre_alembic_schema_adoption_with_parity_verification(test_db_url, alemb
         adopt_existing_schema(engine, dry_run=False)
 
 
-def test_adoption_negative_drift_cases(test_db_url, tmp_path):
-    """
-    Test 10b: Negative tests proving each supported schema drift case refuses adoption without stamping.
-    Cases tested:
-    1. Missing table
-    2. Unexpected extra column
-    3. Missing required column
-    4. Column type mismatch
-    5. Column nullability mismatch
-    """
-    is_sqlite = test_db_url.startswith("sqlite")
-    if not is_sqlite:
-        # In PostgreSQL test container, run drift checks in isolated schemas
-        return
-
-    # Case 1: Missing table (only 1 table created)
-    f1 = tmp_path / "drift_missing_table.db"
-    e1 = create_engine(f"sqlite:///{f1}")
-    Source.__table__.create(bind=e1)
-    with pytest.raises(SchemaParityError, match="Missing required tables"):
-        adopt_existing_schema(e1)
-    assert get_current_revision(e1) is None
-
-    # Case 2: Unexpected extra column
-    f2 = tmp_path / "drift_extra_col.db"
-    e2 = create_engine(f"sqlite:///{f2}")
-    Base.metadata.create_all(e2)
-    with e2.begin() as conn:
-        conn.execute(text("ALTER TABLE sources ADD COLUMN rogue_untracked_column VARCHAR;"))
-    with pytest.raises(SchemaParityError, match="unexpected extra columns"):
-        adopt_existing_schema(e2)
-    assert get_current_revision(e2) is None
-
-    # Case 3: Missing required column
-    f3 = tmp_path / "drift_missing_col.db"
-    e3 = create_engine(f"sqlite:///{f3}")
-    for tbl_name, tbl in Base.metadata.tables.items():
-        if tbl_name == "sources":
-            m = MetaData()
-            t = Table("sources", m, Column("id", String, primary_key=True))
-            t.create(bind=e3)
-        else:
-            tbl.create(bind=e3)
-    with pytest.raises(SchemaParityError, match="missing expected columns"):
-        adopt_existing_schema(e3)
-    assert get_current_revision(e3) is None
-
-    # Case 4: Type mismatch (e.g. column created as Integer instead of String)
-    f4 = tmp_path / "drift_type_mismatch.db"
-    e4 = create_engine(f"sqlite:///{f4}")
-    for tbl_name, tbl in Base.metadata.tables.items():
-        if tbl_name == "sources":
-            m = MetaData()
-            cols = [Column(c.name, Integer if c.name == "source_name" else c.type, primary_key=c.primary_key, nullable=c.nullable) for c in tbl.columns]
-            t = Table("sources", m, *cols)
-            t.create(bind=e4)
-        else:
-            tbl.create(bind=e4)
-    with pytest.raises(SchemaParityError, match="type mismatch"):
-        adopt_existing_schema(e4)
-    assert get_current_revision(e4) is None
-
-    # Case 5: Nullability mismatch (model NOT NULL vs DB NULLABLE)
-    f5 = tmp_path / "drift_nullability.db"
-    e5 = create_engine(f"sqlite:///{f5}")
-    for tbl_name, tbl in Base.metadata.tables.items():
-        if tbl_name == "sources":
-            m = MetaData()
-            cols = [Column(c.name, c.type, primary_key=c.primary_key, nullable=True) for c in tbl.columns]
-            t = Table("sources", m, *cols)
-            t.create(bind=e5)
-        else:
-            tbl.create(bind=e5)
-    with pytest.raises(SchemaParityError, match="nullability mismatch"):
-        adopt_existing_schema(e5)
-    assert get_current_revision(e5) is None
+@pytest.mark.parametrize("drift", [
+    "missing_table", "extra_column", "missing_column", "type", "length",
+    "nullable", "required", "default", "foreign_key", "unique", "index",
+])
+def test_adoption_negative_drift_cases(test_db_url, drift):
+    """Each dialect performs actual drift checks; PostgreSQL is never a no-op."""
+    from sqlalchemy import MetaData, Integer, String
+    metadata = MetaData()
+    for table in Base.metadata.sorted_tables:
+        table.to_metadata(metadata)
+    sources = metadata.tables["sources"]
+    aliases = metadata.tables["cancer_aliases"]
+    cancers = metadata.tables["cancers"]
+    if drift == "missing_table":
+        metadata.remove(metadata.tables["consensus_fact_sources"])
+    elif drift == "extra_column":
+        sources.append_column(Column("rogue_untracked_column", String))
+    elif drift == "missing_column":
+        sources._columns.remove(sources.c.notes)
+    elif drift == "type":
+        sources.c.source_name.type = Integer()
+    elif drift == "length":
+        sources.c.source_name.type = String(12)
+    elif drift == "nullable":
+        sources.c.source_name.nullable = True
+    elif drift == "required":
+        sources.c.notes.nullable = False
+    elif drift == "default":
+        from sqlalchemy import DefaultClause
+        sources.c.source_name.server_default = DefaultClause(text("'unexpected'"))
+    elif drift == "foreign_key":
+        constraint = next(iter(aliases.foreign_key_constraints))
+        aliases.constraints.remove(constraint)
+    elif drift == "unique":
+        next(i for i in cancers.indexes if i.name == "ix_cancers_slug").unique = False
+    elif drift == "index":
+        sources.indexes.remove(next(i for i in sources.indexes if i.name == "ix_sources_id"))
+    engine = create_engine(test_db_url)
+    try:
+        metadata.create_all(engine)
+        with pytest.raises(SchemaParityError):
+            adopt_existing_schema(engine)
+        assert get_current_revision(engine) is None
+        assert "alembic_version" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
 
 
 def test_percent_encoded_credentials_url_handling():
@@ -568,111 +496,119 @@ def test_percent_encoded_credentials_url_handling():
 
 
 def test_migration_failure_and_recovery(test_db_url, alembic_cfg, tmp_path):
-    """
-    Test 11: Controlled migration failure and true backup recovery test.
-    1. Populates baseline database via bootstrap (191 records across all 11 tables).
-    2. Captures exact baseline manifest.
-    3. Creates a pre-migration backup.
-    4. Injects a faulty migration revision in an isolated temporary directory (never touching alembic/versions/).
-    5. Executes migration upgrade via CLI subprocess and proves a nonzero exit code and error output.
-    6. Verifies transactional rollback and exact revision preservation at 0001_initial_schema.
-    7. Restores from pre-migration backup.
-    8. Verifies restored manifest matches baseline manifest bit-for-bit with 0 data loss.
-    9. Verifies application startup check succeeds.
-    """
+    """Prove the intended DDL fails, then restore a real backup to another DB."""
+    from app.database.legacy_audit import EXPECTED_LEGACY_COLUMNS
     engine = create_engine(test_db_url)
-
-    # 1. Apply baseline migration and populate 191 records
     command.upgrade(alembic_cfg, "head")
-    assert get_current_revision(engine) == "0001_initial_schema"
-    execute_bootstrap(engine, dry_run=False)
+    execute_bootstrap(engine)
+    with sessionmaker(bind=engine)() as session:
+        session.add(IngestionJob(id="l003-preserved-job", source_id="nci-us",
+                                 status="SUCCESS", records_created=1))
+        session.commit()
+    # Legacy identity/sequence plus every historical column; no valuable data.
+    meta = MetaData()
+    from sqlalchemy import BigInteger, Identity
+    legacy_id_type = Integer if engine.dialect.name == "sqlite" else BigInteger
+    legacy = Table("cancer_content", meta,
+                   Column("id", legacy_id_type, Identity(), primary_key=True),
+                   *(Column(name, Text) for name in EXPECTED_LEGACY_COLUMNS if name != "id"))
+    meta.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(legacy.insert().values(content="retained legacy text",
+                                                 content_id="legacy-1", content_hash="hash-1"))
+    baseline = capture_current_model_manifest(engine)
+    assert all(baseline["row_counts"][name] > 0 for name in CURRENT_MODEL_TABLES)
+    legacy_before = audit_legacy_cancer_content(engine)
 
-    # 2. Capture baseline manifest
-    manifest_baseline = capture_current_model_manifest(engine)
-    assert manifest_baseline["total_rows"] == 191
-
-    # 3. Take pre-migration backup
-    is_sqlite = test_db_url.startswith("sqlite")
-    backup_file = tmp_path / "pre_migration_backup.db"
+    is_sqlite = engine.dialect.name == "sqlite"
+    backup = tmp_path / ("before.db" if is_sqlite else "before.dump")
+    schema_before = None
     if is_sqlite:
-        db_path = test_db_url.replace("sqlite:///", "")
-        shutil.copy2(db_path, backup_file)
+        import sqlite3
+        with sqlite3.connect(engine.url.database) as source:
+            with sqlite3.connect(backup) as destination:
+                source.backup(destination)
     else:
-        # In PostgreSQL, copy data to dedicated backup schema
-        with engine.begin() as conn:
-            conn.execute(text("DROP SCHEMA IF EXISTS test_backup CASCADE; CREATE SCHEMA test_backup;"))
-            for tbl in CURRENT_MODEL_TABLES:
-                conn.execute(text(f"CREATE TABLE test_backup.{tbl} AS TABLE public.{tbl};"))
+        pg_tool("pg_dump", test_db_url, "-Fc", "-f", str(backup))
+        schema_before = pg_tool("pg_dump", test_db_url, "-s", "-O", "-x")
 
-    # 4. Inject faulty migration in isolated temporary directory
-    tmp_versions_dir = tmp_path / "faulty_versions"
-    tmp_versions_dir.mkdir(parents=True, exist_ok=True)
-    faulty_rev_file = tmp_versions_dir / "9999_faulty_test_revision.py"
-    faulty_rev_content = '''"""faulty_test_revision"""
-revision = '9999_faulty'
-down_revision = '0001_initial_schema'
-branch_labels = None
-depends_on = None
-
-from alembic import op
-import sqlalchemy as sa
-
-def upgrade():
-    op.create_table("faulty_probe_table", sa.Column("id", sa.Integer, primary_key=True))
-    op.execute("THIS_IS_A_DELIBERATE_SYNTAX_ERROR_FOR_FAILURE_TESTING;")
-
-def downgrade():
-    op.drop_table("faulty_probe_table")
-'''
-    faulty_rev_file.write_text(faulty_rev_content)
-
-    project_root = Path(__file__).resolve().parent.parent
-    real_versions = project_root / "alembic" / "versions"
-
-    # Write a temporary alembic.ini configured with isolated version_locations
-    tmp_ini = tmp_path / "test_alembic.ini"
-    raw_url = engine.url.render_as_string(hide_password=False)
-    ini_content = f"""[alembic]
-script_location = {project_root / "alembic"}
-version_locations = {real_versions}:{tmp_versions_dir}
-version_path_separator = :
-sqlalchemy.url = {raw_url.replace("%", "%%")}
-"""
-    tmp_ini.write_text(ini_content)
-
-    # 5. Execute migration via CLI subprocess to prove nonzero exit code
-    proc = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(tmp_ini), "upgrade", "head"],
-        capture_output=True,
-        text=True,
+    faulty_dir = tmp_path / "faulty_versions"
+    faulty_dir.mkdir()
+    (faulty_dir / "9999_faulty.py").write_text(
+        "revision = '9999_faulty'\n"
+        "down_revision = '0001_initial_schema'\n"
+        "branch_labels = depends_on = None\n"
+        "from alembic import op\n"
+        "import sqlalchemy as sa\n"
+        "def upgrade():\n"
+        "    op.create_table('faulty_probe_table', sa.Column('id', sa.Integer))\n"
+        "    op.execute('L003_INTENTIONAL_MIGRATION_FAILURE;')\n"
+        "def downgrade():\n"
+        "    op.drop_table('faulty_probe_table')\n"
     )
-    assert proc.returncode != 0, f"Expected CLI failure, but command succeeded:\n{proc.stdout}"
+    project_root = Path(__file__).resolve().parent.parent
+    config_path = tmp_path / "failure.ini"
+    config_path.write_text(
+        "[alembic]\n"
+        f"script_location = {project_root / 'alembic'}\n"
+        "path_separator = os\n"
+        f"version_locations = {project_root / 'alembic/versions'}{os.pathsep}{faulty_dir}\n"
+    )
+    env = os.environ.copy()
+    env.update(DATABASE_URL=test_db_url, ENVIRONMENT="development")
+    proc = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(config_path), "upgrade", "head"],
+        env=env, capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert "L003_INTENTIONAL_MIGRATION_FAILURE" in proc.stderr, proc.stderr
+    assert get_current_revision(engine) == "0001_initial_schema"
+    compare_current_model_manifests(baseline, capture_current_model_manifest(engine))
+    compare_legacy_audits(legacy_before, audit_legacy_cancer_content(engine))
+    if not is_sqlite:
+        assert "faulty_probe_table" not in inspect(engine).get_table_names()
 
-    # 6. Verify transactional rollback and revision preservation
-    curr_rev = get_current_revision(engine)
-    assert curr_rev != "9999_faulty"
-    assert curr_rev == "0001_initial_schema"
+    def verify_restored(restored):
+        assert verify_database_schema_at_head(restored) == "0001_initial_schema"
+        assert verify_schema_parity(restored)["tables_verified"] == 11
+        compare_current_model_manifests(baseline, capture_current_model_manifest(restored))
+        compare_legacy_audits(legacy_before, audit_legacy_cancer_content(restored))
+        assert verify_foreign_key_integrity(restored)["violations"] == 0
+        assert "faulty_probe_table" not in inspect(restored).get_table_names()
+        if restored.dialect.name == "postgresql":
+            with restored.begin() as connection:
+                new_id = connection.execute(
+                    text("INSERT INTO cancer_content (content) VALUES ('sequence probe') RETURNING id")
+                ).scalar_one()
+                assert new_id > max(legacy_before["primary_key_set"])
+                # Probe must not change accepted baseline evidence.
+                connection.execute(text("DELETE FROM cancer_content WHERE id=:id"), {"id": new_id})
 
-    # 7. Perform pre-migration backup restoration
-    if is_sqlite:
+    try:
+        if is_sqlite:
+            restored_file = tmp_path / "restored.db"
+            shutil.copy2(backup, restored_file)
+            restored = create_engine(f"sqlite:///{restored_file}")
+            try:
+                verify_restored(restored)
+            finally:
+                restored.dispose()
+        else:
+            with disposable_postgres(os.environ["POSTGRES_TEST_URL"]) as restore_url:
+                pg_tool("pg_restore", restore_url, "-e", "-1", "-O", "-x",
+                        "-d", make_url(restore_url).database, str(backup))
+                schema_after = pg_tool("pg_dump", restore_url, "-s", "-O", "-x")
+                def stable_dump(value):
+                    return "\n".join(line for line in value.splitlines()
+                                     if not line.startswith(("\\restrict ", "\\unrestrict ")))
+                assert stable_dump(schema_before) == stable_dump(schema_after)
+                restored = create_engine(restore_url)
+                try:
+                    verify_restored(restored)
+                finally:
+                    restored.dispose()
+    finally:
         engine.dispose()
-        shutil.copy2(backup_file, db_path)
-        engine = create_engine(test_db_url)
-    else:
-        with engine.begin() as conn:
-            for tbl in CURRENT_MODEL_TABLES:
-                conn.execute(text(f"TRUNCATE TABLE public.{tbl} CASCADE;"))
-                conn.execute(text(f"INSERT INTO public.{tbl} SELECT * FROM test_backup.{tbl};"))
-            conn.execute(text("DROP SCHEMA test_backup CASCADE;"))
-
-    # 8. Verify restored database manifest matches baseline bit-for-bit
-    manifest_restored = capture_current_model_manifest(engine)
-    compare_current_model_manifests(manifest_baseline, manifest_restored, "Baseline", "Restored")
-    assert manifest_restored["total_rows"] == 191
-
-    # 9. Verify startup check succeeds after recovery
-    recovered_head = verify_database_schema_at_head(engine)
-    assert recovered_head == "0001_initial_schema"
 
 
 def test_model_to_migration_drift_check(test_db_url, alembic_cfg):

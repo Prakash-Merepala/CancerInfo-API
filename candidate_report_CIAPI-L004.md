@@ -1,18 +1,21 @@
 # CIAPI-L004 Candidate Report & Handoff to Mithra: Resolve Document Reuse Rights & Quarantine Unresolved Material
 
-> **Working-Tree Candidate & Formal Handoff Document**  
+> **Repository-Level Candidate Report & Review Document**  
 > Prepared for **Mithra** (Reviewer / Evaluator) & **Prakash** (Repository Owner).  
-> **New Branch:** `CIAPI-L004-resolve-document-reuse-rights-and-quarantine` (branched from `CIAPI-L003-postgresql-migrations-controlled-initialization`)  
 > In accordance with `CONTRIBUTING.md:67`: *"Include requirements, changed files, schema/data impact, exact tests/results and unresolved risks in each handoff."*  
-> **Status:** All code, migration, seed, API schema, and test requirements implemented and verified (88/88 tests passing). Ready for commit and review.
+> **Current Branch:** `CIAPI-L004-resolve-document-reuse-rights-and-quarantine`  
+> **Reviewed Commit SHA:** `a8f50395eaed22db49193d2dad249ade17ec5b9d`  
+> **Actual Remote L003 Merge Base:** `00356293d28a3cdb99320db5dbcd7e13b2766fd1`  
 
 ---
 
-## 1. Executive Summary & Objective Realization
+## 1. Executive Summary & Status Separation
 
 CIAPI-L004 resolves the critical architectural flaw where source-level clearance flags (`license_status="APPROVED"`, `trust_tier="Tier 1"`, or government agency status) were erroneously assumed to clear all underlying content published by that entity.
 
-### Core Governance Guarantees Implemented:
+Following Mithra's review, project status is strictly divided into two distinct dimensions:
+
+### A. Engineering Implementation Status: COMPLETE
 1. **Document-Level Fail-Closed Clearance**: Publication eligibility is strictly evaluated per individual document record. Source-level metadata never confers publication eligibility to any document.
 2. **Comprehensive URL Inventory (32 URLs)**: Every candidate document (20 normal content URLs + 20 consensus URLs = 32 distinct URLs) has a dedicated `SourceDocument` record with explicit rights metadata.
 3. **Quarantine of Unresolved Material**:
@@ -22,45 +25,55 @@ CIAPI-L004 resolves the critical architectural flaw where source-level clearance
 4. **Relational Consensus Citation Linkage**: Every `ConsensusFactSource` record now possesses an explicit foreign key (`source_document_id`) linking directly to its backing `SourceDocument`. Quotation snippets (50–250 characters) and direct attributions are strictly preserved.
 5. **Linear Reversible Migration**: Alembic migration `0002_document_rights_and_consensus_linkage` builds cleanly on top of L003's `0001_initial_schema` with verified upgrade, downgrade, and re-upgrade paths.
 6. **Consumer API Provenance**: Downstream consumers receive document-level provenance, publication status, reuse conditions, and commercial redistribution permissions in `/v1/cancers/{slug}/{topic}` and `/v1/search` payloads.
+7. **Consumer Marketplace & Directory Listing Rules**: Documented in `docs/CONTENT_RIGHTS_AND_ATTRIBUTION.md` Section 12.
+
+### B. L004 Acceptance Status: BLOCKED ON OWNER REVIEW (OPEN)
+- **Rights Evidence Collected**: 32 / 32 candidate documents have authoritative policy/license evidence URLs.
+- **Owner Review Dates**: 0 / 32 documents have formal review dates (`rights_reviewed_at is null`).
+- **Decision Owners**: 0 / 32 documents have formal decision owners (`rights_reviewer is null`).
+- **Third-Party Permissions**: 0 requests submitted; 4 WHO fact sheets have permissions `REQUIRED_NOT_SUBMITTED`.
+- **Truthful Acceptance Reporting**: The missing owner review is reported as an open acceptance blocker until repository owner (Prakash) executes his manual review. No dates or owner approvals have been fabricated.
 
 ---
 
-## 2. Candidate URL Inventory & Exact Decision Matrix (32 URLs)
+## 2. Reconciled 32-Document Candidate Inventory & Decision Matrix
 
-| # | Source ID | Candidate URL | `publication_status` | Assigned Quarantine Reason |
-|---|---|---|---|---|
-| 1 | `nci-us` | `https://www.cancer.gov/types/breast` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded illustrations, photography, and third-party clinical media. |
-| 2 | `nci-us` | `https://www.cancer.gov/types/breast/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded illustrations and third-party clinical media. |
-| 3 | `nci-us` | `https://www.cancer.gov/types/breast/treatment` | `REVIEW_REQUIRED` | Awaiting exact-document verification of clinical study tables and proprietary drug references. |
-| 4 | `nci-us` | `https://www.cancer.gov/types/cervical/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded anatomical diagrams. |
-| 5 | `nci-us` | `https://www.cancer.gov/types/cervical/screening` | `REVIEW_REQUIRED` | Awaiting item-level rights audit; screening guidelines may reference joint proprietary consensus tables. |
-| 6 | `nci-us` | `https://www.cancer.gov/types/colorectal` | `REVIEW_REQUIRED` | Awaiting exact-document audit for medical diagrams and patient photography releases. |
-| 7 | `nci-us` | `https://www.cancer.gov/types/colorectal/screening` | `REVIEW_REQUIRED` | Colorectal screening recommendations may cite proprietary USPSTF or clinical consortium evidence tables. |
-| 8 | `nci-us` | `https://www.cancer.gov/types/lung` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded clinical illustrations and third-party infographics. |
-| 9 | `nci-us` | `https://www.cancer.gov/types/lung/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for symptom presentation diagrams. |
-| 10 | `nci-us` | `https://www.cancer.gov/types/skin` | `REVIEW_REQUIRED` | Awaiting exact-document verification for clinical dermatological photography and ABCDE guide illustrations. |
-| 11 | `nci-us` | `https://www.cancer.gov/types/prostate` | `REVIEW_REQUIRED` | Consensus citation; awaiting item-level audit of prostate overview and anatomical diagrams. |
-| 12 | `nci-us` | `https://www.cancer.gov/types/prostate/symptoms` | `REVIEW_REQUIRED` | Consensus citation; awaiting item-level audit of urinary symptom guides. |
-| 13 | `nci-us` | `https://www.cancer.gov/types/prostate/screening` | `REVIEW_REQUIRED` | Consensus citation; PSA screening guideline may incorporate copyrighted clinical decision algorithms. |
-| 14 | `nci-us` | `https://www.cancer.gov/types/skin/symptoms` | `REVIEW_REQUIRED` | Consensus citation; melanoma clinical pictures must be confirmed public domain vs licensed medical photography. |
-| 15 | `nhs-uk` | `https://www.nhs.uk/conditions/breast-cancer/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 text vs third-party images and trust photography. |
-| 16 | `nhs-uk` | `https://www.nhs.uk/conditions/breast-cancer/symptoms/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 terms and confirmation that medical diagrams are excluded. |
-| 17 | `nhs-uk` | `https://www.nhs.uk/conditions/bowel-cancer/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 coverage on patient staging descriptions. |
-| 18 | `nhs-uk` | `https://www.nhs.uk/conditions/bowel-cancer/symptoms/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 compliance for symptom text. |
-| 19 | `nhs-uk` | `https://www.nhs.uk/conditions/lung-cancer/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 terms and removal of NHS trust-specific media. |
-| 20 | `nhs-uk` | `https://www.nhs.uk/conditions/lung-cancer/symptoms/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of OGL v3.0 text terms and attribution requirements. |
-| 21 | `nhs-uk` | `https://www.nhs.uk/conditions/cervical-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation; awaiting exact-document confirmation of OGL v3.0 compliance. |
-| 22 | `nhs-uk` | `https://www.nhs.uk/conditions/cervical-screening/` | `REVIEW_REQUIRED` | Consensus citation; cervical screening guidelines require verification of NHS OGL v3.0 coverage. |
-| 23 | `nhs-uk` | `https://www.nhs.uk/conditions/prostate-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation; awaiting exact-document confirmation of OGL v3.0 compliance. |
-| 24 | `who-global` | `https://www.who.int/news-room/fact-sheets/detail/breast-cancer` | `PERMISSION_PENDING` | WHO CC BY-NC-SA 3.0 IGO non-commercial restriction and redistribution conditions are unresolved for public/commercial API consumption. A free API cannot be presumed non-commercial. Written permission or commercial waiver required. |
-| 25 | `who-global` | `https://www.who.int/news-room/fact-sheets/detail/cancer` | `PERMISSION_PENDING` | Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission. |
-| 26 | `who-global` | `https://www.who.int/news-room/fact-sheets/detail/cervical-cancer` | `PERMISSION_PENDING` | Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission. |
-| 27 | `who-global` | `https://www.who.int/news-room/fact-sheets/detail/lung-cancer` | `PERMISSION_PENDING` | WHO CC BY-NC-SA 3.0 IGO non-commercial restriction prevents public/commercial API redistribution without written permission. |
-| 28 | `cancer-australia` | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/bowel-cancer/symptoms` | `REVIEW_REQUIRED` | Source-level CC BY 4.0 label cannot be used as automatic blanket clearance. Exact documents remain non-publication-eligible until individual page review verifies absence of third-party restrictions or Crown copyright carve-outs. |
-| 29 | `cancer-australia` | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/lung-cancer/symptoms` | `REVIEW_REQUIRED` | Consensus citation; source-level CC BY 4.0 is unverified for this exact document. Item-level audit required under Crown copyright. |
-| 30 | `cancer-australia` | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/melanoma/symptoms` | `REVIEW_REQUIRED` | Consensus citation; high probability of third-party clinical copyright on dermatological symptoms and illustrations under Commonwealth Crown copyright and CC BY 4.0 conditions. |
-| 31 | `cancer-australia` | `https://www.canceraustralia.gov.au/cancer-types/breast-cancer/screening` | `REVIEW_REQUIRED` | Awaiting exact-document verification of multi-jurisdictional program recommendations under Commonwealth Crown copyright and CC BY 4.0 terms. |
-| 32 | `cdc-us` | `https://www.cdc.gov/cancer/colorectal/basic_info/screening/` | `REVIEW_REQUIRED` | CDC public domain policy specifically excludes third-party materials, campaign partner assets, and copyrighted photos. Exact page must be audited. |
+Deterministically generated from `app/ingestion/rights_inventory.py` and matching database seed records:
+
+| # | Source ID | Publishing Body | URL | Status | Assigned Quarantine Reason |
+|---|---|---|---|---|---|
+| 1 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/breast` | `REVIEW_REQUIRED` | Awaiting exact-document audit for third-party medical illustrations, copyrighted summaries, or external guideline inclusions. Source-level public domain status does not confer automatic per-document clearance. |
+| 2 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/breast/screening` | `REVIEW_REQUIRED` | Awaiting item-level verification of external guideline text and third-party recommendations. |
+| 3 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/breast/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded illustrations and third-party clinical media. |
+| 4 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/breast/treatment` | `REVIEW_REQUIRED` | Awaiting exact-document verification of clinical study tables and proprietary drug references. |
+| 5 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/cervical/symptoms` | `REVIEW_REQUIRED` | Consensus-only citation awaiting exact-page review for third-party media and external citations. |
+| 6 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/colorectal` | `REVIEW_REQUIRED` | Awaiting exact-document audit for anatomical graphics and proprietary statistics. |
+| 7 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/colorectal/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for embedded illustrations and third-party media. |
+| 8 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/lung` | `REVIEW_REQUIRED` | Awaiting exact-document audit for histological images and medical media. |
+| 9 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/lung/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for diagnostic flowchart diagrams and external citations. |
+| 10 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/pancreatic` | `REVIEW_REQUIRED` | Awaiting exact-document audit for medical diagrams and clinical text provenance. |
+| 11 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/pancreatic/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for third-party clinical contributions. |
+| 12 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/prostate` | `REVIEW_REQUIRED` | Awaiting exact-document audit for anatomical illustrations and grading diagrams. |
+| 13 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/prostate/symptoms` | `REVIEW_REQUIRED` | Awaiting exact-document audit for clinical symptom text and media. |
+| 14 | `nci-us` | National Cancer Institute | `https://www.cancer.gov/types/skin/symptoms` | `REVIEW_REQUIRED` | Consensus citation; high risk of third-party clinical photograph copyright in dermatological ABCDE guides. |
+| 15 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/bowel-cancer-screening/` | `REVIEW_REQUIRED` | Awaiting exact-document verification under OGL v3.0 to confirm absence of proprietary screening kit imagery or third-party guidelines. |
+| 16 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/bowel-cancer/symptoms/` | `REVIEW_REQUIRED` | Awaiting exact-document audit for third-party licensed patient photography and clinical graphics. |
+| 17 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/breast-cancer/symptoms/` | `REVIEW_REQUIRED` | Awaiting exact-document audit for clinical symptom media and proprietary partner contributions. |
+| 18 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/breast-screening-mammogram/` | `REVIEW_REQUIRED` | Awaiting exact-document verification of clinical equipment photos and guideline references. |
+| 19 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/cervical-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation awaiting exact-page review for third-party media under OGL v3.0. |
+| 20 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/lung-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation awaiting exact-page review for third-party imagery. |
+| 21 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/melanoma-skin-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation; high probability of third-party clinical dermatological copyright on ABCDE images. |
+| 22 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/pancreatic-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation awaiting exact-page review for third-party media under OGL v3.0. |
+| 23 | `nhs-uk` | National Health Service | `https://www.nhs.uk/conditions/prostate-cancer/symptoms/` | `REVIEW_REQUIRED` | Consensus citation awaiting exact-page review for third-party media under OGL v3.0. |
+| 24 | `who-global` | World Health Organization | `https://www.who.int/news-room/fact-sheets/detail/breast-cancer` | `PERMISSION_PENDING` | WHO CC BY-NC-SA 3.0 IGO non-commercial restriction and redistribution conditions are unresolved for public/commercial API consumption. A free API cannot be presumed non-commercial. Written permission or commercial waiver required. |
+| 25 | `who-global` | World Health Organization | `https://www.who.int/news-room/fact-sheets/detail/cancer` | `PERMISSION_PENDING` | Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission. |
+| 26 | `who-global` | World Health Organization | `https://www.who.int/news-room/fact-sheets/detail/cervical-cancer` | `PERMISSION_PENDING` | Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission. |
+| 27 | `who-global` | World Health Organization | `https://www.who.int/news-room/fact-sheets/detail/lung-cancer` | `PERMISSION_PENDING` | WHO CC BY-NC-SA 3.0 IGO non-commercial restriction prevents public/commercial API redistribution without written permission. |
+| 28 | `cancer-australia` | Cancer Australia | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/bowel-cancer/symptoms` | `REVIEW_REQUIRED` | Source-level CC BY 4.0 label cannot be used as automatic blanket clearance. Exact documents remain non-publication-eligible until individual page review verifies absence of third-party restrictions or Crown copyright carve-outs. |
+| 29 | `cancer-australia` | Cancer Australia | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/lung-cancer/symptoms` | `REVIEW_REQUIRED` | Consensus citation; source-level CC BY 4.0 is unverified for this exact document. Item-level audit required under Crown copyright. |
+| 30 | `cancer-australia` | Cancer Australia | `https://www.canceraustralia.gov.au/affected-cancer/cancer-types/melanoma/symptoms` | `REVIEW_REQUIRED` | Consensus citation; high probability of third-party clinical copyright on dermatological symptoms and illustrations under Commonwealth Crown copyright and CC BY 4.0 conditions. |
+| 31 | `cancer-australia` | Cancer Australia | `https://www.canceraustralia.gov.au/cancer-types/breast-cancer/screening` | `REVIEW_REQUIRED` | Awaiting exact-document verification of multi-jurisdictional program recommendations under Commonwealth Crown copyright and CC BY 4.0 terms. |
+| 32 | `cdc-us` | Centers for Disease Control and Prevention | `https://www.cdc.gov/cancer/colorectal/basic_info/screening/` | `REVIEW_REQUIRED` | Item-level review unresolved. CDC specifically identifies third-party and copyrighted material exceptions on its pages. Without item-level evidence confirming the page contains only public domain text, publication remains fail-closed. |
 
 ---
 
@@ -85,7 +98,6 @@ CIAPI-L004 resolves the critical architectural flaw where source-level clearance
 ============================= test session starts ==============================
 platform darwin -- Python 3.11.16, pytest-9.1.1, pluggy-1.6.0
 rootdir: /Users/prakash/VS Code/CancerInfo-API
-plugins: asyncio-1.4.0, anyio-4.15.1
 collected 88 items
 
 tests/test_admin_and_pipeline.py ....                                    [  4%]
@@ -103,59 +115,42 @@ tests/test_taxonomy_and_normalization.py .....                           [100%]
 ======================== 88 passed, 1 warning in 4.77s =========================
 ```
 
-- **Document Rights Test Suite (`tests/test_document_rights.py`)**: 14 tests covering all 20 acceptance requirements (100% pass).
-- **Bootstrap Suite (`tests/test_bootstrap.py`)**: 10 tests verifying 203 planned baseline rows, rollback safety, and idempotency (100% pass).
-- **Migration Suite (`tests/test_migrations.py`)**: 23 tests verifying clean upgrade/downgrade, zero drift, and adoption parity (100% pass).
-
 ---
 
 ## 5. Precise File-Change Summary
 
 | File | Status | Description |
 |---|---|---|
-| `alembic/versions/0002_document_rights_and_consensus_linkage.py` | Untracked (New) | Alembic migration adding document rights columns to `source_documents` and `source_document_id` FK to `consensus_fact_sources`. |
-| `app/core/constants.py` | Modified | Added `PublicationStatus` enum (`ELIGIBLE`, `REVIEW_REQUIRED`, `QUARANTINED`, `PERMISSION_PENDING`, `REJECTED`). |
-| `app/core/rights_validation.py` | Untracked (New) | Core rights validation engine, eligibility evaluator, and assertion errors. |
-| `app/ingestion/rights_inventory.py` | Untracked (New) | Canonical machine-readable inventory of all 32 candidate URLs and audit export tool. |
-| `app/models/__init__.py` | Modified | Added rights fields, fail-closed `__init__`, `is_publication_eligible()`, and reciprocal consensus relationships. |
-| `app/ingestion/seed.py` | Modified | Seeding logic applying document rights from inventory and linking consensus citations to exact `SourceDocument` rows. |
-| `app/ingestion/pipeline.py` | Modified | Removed source-to-document license inheritance; new documents default fail-closed to `REVIEW_REQUIRED`. |
-| `app/schemas/content.py` | Modified | Added document rights fields to `ProvenanceSourceOut` and `CorroboratingSourceOut`. |
-| `app/repositories/content_repo.py` | Modified | Eager-loads `source_document` on `ContentSource` and `ConsensusFactSource`. |
+| `alembic/versions/0002_document_rights_and_consensus_linkage.py` | Added | Linear Alembic migration adding document rights fields and consensus linkage. |
+| `app/core/constants.py` | Modified | Added `PublicationStatus` and `ThirdPartyPermissionStatus` enums. |
+| `app/core/rights_validation.py` | Added | Fail-closed publication validation, eligibility evaluator, and source-level decoupling checks. |
+| `app/ingestion/rights_inventory.py` | Added | Canonical 32-URL registry, acceptance audit engine, owner-review API, and table generator. |
+| `app/models/__init__.py` | Modified | Added rights columns, fail-closed `__init__`, `is_publication_eligible()`, and reciprocal relationships. |
+| `app/ingestion/seed.py` | Modified | Seed engine applying rights from inventory and establishing consensus `SourceDocument` linkage. |
+| `app/ingestion/pipeline.py` | Modified | Default newly discovered documents strictly to `REVIEW_REQUIRED`. |
+| `app/schemas/content.py` | Modified | Exposed document-level rights fields in API response models. |
+| `app/repositories/content_repo.py` | Modified | Eager-loads `source_document` on junctions. |
 | `app/api/v1/endpoints/cancers.py` | Modified | Serializes exact document attribution and redistribution metadata in response models. |
 | `app/api/v1/endpoints/search.py` | Modified | Serializes exact document attribution and redistribution metadata in search hit responses. |
 | `app/database/bootstrap.py` | Modified | Updated planned baseline count to 203 rows. |
 | `app/database/adoption.py` | Modified | Updated baseline adoption target to `0002_document_rights_and_consensus_linkage`. |
-| `docs/CONTENT_RIGHTS_AND_ATTRIBUTION.md` | Untracked (New) | Full 11-section policy, legal, architecture, and operational transition documentation. |
-| `candidate_report_CIAPI-L004.md` | Untracked (New) | Formal candidate report and handoff for Bob and Prakash. |
-| `tests/test_document_rights.py` | Untracked (New) | Comprehensive test suite for all 20 L004 requirements. |
+| `docs/CONTENT_RIGHTS_AND_ATTRIBUTION.md` | Added | Comprehensive guide covering rights policy, third-party rules, transition workflow, and marketplace listing rules. |
+| `docs/HANDOFF_TO_MITHRA.md` | Added | Dedicated review handoff document for Mithra. |
+| `candidate_report_CIAPI-L004.md` | Added | Formal repository candidate report following `CONTRIBUTING.md:67`. |
+| `scripts/audit_rights_acceptance.py` | Added | Deterministic CLI audit tool checking L004 acceptance criteria and blockers. |
+| `tests/test_document_rights.py` | Added | Comprehensive test suite for all 20 L004 requirements. |
 | `tests/test_bootstrap.py` | Modified | Updated expected baseline row count to 203. |
 | `tests/test_migrations.py` | Modified | Updated expected baseline row count to 203. |
 
 ---
 
-## 6. Unresolved Risks & Next Steps for Bob
+## 6. Open Acceptance Blockers & Owner Next Steps
 
-### Unresolved Risks:
-1. **Legal Clearance Pending**: 0 of 32 documents are currently cleared for commercial redistribution (`ELIGIBLE`). Until Prakash conducts the manual page-by-page audit, the API operates in quarantine mode where unreviewed materials cannot be syndicated as cleared public content.
-2. **WHO Permission Requirement**: The 4 WHO URLs cannot be cleared without a signed written waiver or commercial license from WHO permissions.
-3. **Database Drift Safeguard**: Environments running unversioned schemas must use `scripts/adopt_existing_schema.py` or run `alembic upgrade head` before starting the application in production mode.
+### Open Blockers:
+1. **Manual Owner Review Pending**: All 32 candidate documents have rights evidence collected, but require formal owner review timestamp (`rights_reviewed_at`) and decision owner signature (`rights_reviewer`) by Prakash.
+2. **WHO Commercial Permission**: All 4 WHO documents remain `PERMISSION_PENDING` with permission `REQUIRED_NOT_SUBMITTED`. Formal permission request must be transmitted to WHO permissions committee before commercial API syndication is permitted.
 
-### Next Steps for Bob:
-1. **Review Working Tree Diff**:
-   ```bash
-   git diff
-   git status
-   ```
-2. **Stage and Commit Changes**:
-   ```bash
-   git add .
-   git commit -m "feat(rights): resolve document reuse rights and quarantine unresolved material (CIAPI-L004)"
-   ```
-3. **Push to Remote Branch & Trigger CI**:
-   ```bash
-   git push origin CIAPI-L003-postgresql-migrations-controlled-initialization
-   ```
-4. **Create Pull Request**:
-   - Compare `main` ... `CIAPI-L003-postgresql-migrations-controlled-initialization`
-   - Include `candidate_report_CIAPI-L004.md` in the PR description as the evidence base.
+### Action Plan for Prakash to Close Acceptance:
+1. Inspect each candidate URL for third-party clinical illustrations or copyrighted summaries.
+2. Use `record_owner_rights_review()` to record review decisions.
+3. Transmit permission inquiry to WHO permissions committee for WHO fact sheets.

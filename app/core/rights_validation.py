@@ -71,7 +71,15 @@ def evaluate_publication_eligibility(
 
     # 7. Third-party permissions
     third_party_status = getattr(doc, "third_party_permission_status", None)
-    if third_party_status in {"PENDING", "REVIEW_REQUIRED", "UNREVIEWED", "RESTRICTED"}:
+    if third_party_status in {
+        "REQUIRED_NOT_SUBMITTED",
+        "REQUESTED_AWAITING_RESPONSE",
+        "PENDING",
+        "REVIEW_REQUIRED",
+        "UNREVIEWED",
+        "RESTRICTED",
+        "DENIED",
+    }:
         reasons.append(f"Unresolved third-party permission status: '{third_party_status}'")
 
     is_eligible = len(reasons) == 0

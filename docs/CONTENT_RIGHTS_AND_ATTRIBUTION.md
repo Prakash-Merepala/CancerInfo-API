@@ -263,3 +263,37 @@ except PublicationEligibilityError as err:
 3. **Preserve Relational Integrity**: Never add a consensus citation without linking it to its corresponding `SourceDocument`.
 4. **Keep Quarantine Reasons Explicit**: When quarantining a document, always state the exact legal ambiguity or restriction in `quarantine_reason`.
 5. **No Runtime Schema Mutations**: Always use Alembic migrations for schema updates; never reintroduce `Base.metadata.create_all()`.
+
+---
+
+## 12. Consumer, Marketplace, and Public Directory Listing Rules
+
+When publishing or documenting the CancerInfo API on public portals (such as RapidAPI, Postman Public Workspace, OpenAPI hub catalogs, GitHub README, or product websites), developers and marketers must strictly adhere to the following consumer-listing rules:
+
+### 1. Coverage Claims Restricted to Actually Eligible Corpus
+- Public directory listings, API documentation, and marketplace descriptions must advertise coverage based **strictly on documents that have achieved `publication_status == "ELIGIBLE"`**.
+- Documents held under `REVIEW_REQUIRED`, `QUARANTINED`, or `PERMISSION_PENDING` must **never** be advertised as commercially cleared or unrestricted API coverage.
+
+### 2. Truthful Representation of Current Clearance Status
+- In the current pre-launch stage, exactly **0 of 32 candidate documents are marked `ELIGIBLE`**; all 32 remain quarantined or in review pending manual audit by the repository owner (Prakash).
+- Marketplace listings and documentation must truthfully state this pre-cleared quarantine state and must not make misleading claims of full commercial clearance.
+
+### 3. Downstream Redistribution & Commercial Restrictions Must Not Be Concealed
+- Downstream developers must be informed of redistribution constraints.
+- Because the API exposes `publication_status`, `reuse_conditions`, `commercial_redistribution_allowed`, and `rights_evidence_url` on both `ProvenanceSourceOut` and `CorroboratingSourceOut` response models, API consumers must respect these fields when syndicating or incorporating data into commercial applications.
+
+### 4. Attribution Requirements Must Remain Prominent
+- Upstream licenses requiring attribution (such as NHS Open Government Licence v3.0 and Cancer Australia CC BY 4.0) must be prominently documented.
+- Downstream applications consuming the API are legally required to pass through the specified `attribution_text`.
+
+### 5. Prohibited Claims Regarding WHO and Non-Commercial Sources
+- Content originating from the World Health Organization (governed by CC BY-NC-SA 3.0 IGO) must **never** be marketed as commercially reusable while third-party permission remains unresolved (`REQUIRED_NOT_SUBMITTED`).
+
+### 6. Strict Prohibition of Endorsement Inferences
+- Marketplace listings and client documentation must explicitly state that the CancerInfo API is an independent data aggregation service.
+- Listing language must never claim, imply, or suggest that the National Cancer Institute, National Health Service, World Health Organization, Cancer Australia, or Centers for Disease Control and Prevention endorse the CancerInfo API, its maintainers, or downstream client applications.
+
+### 7. Trademarks, Logos, and Media Assets Require Separate Rights
+- Departmental crests, NHS blue lozenges, WHO emblem, U.S. Federal seals, Commonwealth coats of arms, and clinical photography are protected trademarks and intellectual property.
+- They are excluded from API payloads and must never be used in marketplace promotional collateral without explicit licensing from each respective trademark owner.
+

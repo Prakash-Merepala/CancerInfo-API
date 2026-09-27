@@ -12,10 +12,11 @@ Guiding Principles:
 """
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set
 from sqlalchemy.orm import Session
 
-from app.core.constants import PublicationStatus
+from app.core.constants import PublicationStatus, ThirdPartyPermissionStatus
 
 
 @dataclass(frozen=True)
@@ -620,8 +621,8 @@ RIGHTS_INVENTORY: Dict[str, DocumentRightsDecision] = {
         attribution_text="Source: World Health Organization (WHO). Licensed under CC BY-NC-SA 3.0 IGO.",
         reuse_restrictions="CC BY-NC-SA 3.0 IGO prohibits commercial use and requires share-alike adaptation licensing. Public/commercial API distribution is not permitted without explicit written agreement from WHO.",
         quarantine_reason="WHO CC BY-NC-SA 3.0 IGO non-commercial restriction and redistribution conditions are unresolved for public/commercial API consumption. A free API cannot be presumed non-commercial. Written permission or commercial waiver required.",
-        third_party_permission_status="PENDING",
-        third_party_permission_notes="Formal permission request for API distribution pending submission to WHO permissions team.",
+        third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
+        third_party_permission_notes="Commercial waiver or formal written permission from WHO is required for public/commercial API redistribution, but no request has yet been submitted to WHO permissions team.",
     ),
     "https://www.who.int/news-room/fact-sheets/detail/cancer": DocumentRightsDecision(
         url="https://www.who.int/news-room/fact-sheets/detail/cancer",
@@ -644,8 +645,8 @@ RIGHTS_INVENTORY: Dict[str, DocumentRightsDecision] = {
         attribution_text="Source: World Health Organization (WHO). Licensed under CC BY-NC-SA 3.0 IGO.",
         reuse_restrictions="Non-commercial restriction applies. Commercial/API distribution forbidden without explicit waiver.",
         quarantine_reason="Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission.",
-        third_party_permission_status="PENDING",
-        third_party_permission_notes="Pending commercial waiver or formal permission from WHO.",
+        third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
+        third_party_permission_notes="Commercial waiver or formal written permission from WHO is required for public/commercial API redistribution, but no request has yet been submitted to WHO permissions team.",
     ),
     "https://www.who.int/news-room/fact-sheets/detail/cervical-cancer": DocumentRightsDecision(
         url="https://www.who.int/news-room/fact-sheets/detail/cervical-cancer",
@@ -668,8 +669,8 @@ RIGHTS_INVENTORY: Dict[str, DocumentRightsDecision] = {
         attribution_text="Source: World Health Organization (WHO). Licensed under CC BY-NC-SA 3.0 IGO.",
         reuse_restrictions="Non-commercial restriction applies. Commercial/API distribution forbidden without explicit waiver.",
         quarantine_reason="Consensus citation; WHO CC BY-NC-SA 3.0 IGO non-commercial license restriction prevents public/commercial API redistribution without written permission.",
-        third_party_permission_status="PENDING",
-        third_party_permission_notes="Pending commercial waiver or formal permission from WHO.",
+        third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
+        third_party_permission_notes="Commercial waiver or formal written permission from WHO is required for public/commercial API redistribution, but no request has yet been submitted to WHO permissions team.",
     ),
     "https://www.who.int/news-room/fact-sheets/detail/lung-cancer": DocumentRightsDecision(
         url="https://www.who.int/news-room/fact-sheets/detail/lung-cancer",
@@ -692,8 +693,8 @@ RIGHTS_INVENTORY: Dict[str, DocumentRightsDecision] = {
         attribution_text="Source: World Health Organization (WHO). Licensed under CC BY-NC-SA 3.0 IGO.",
         reuse_restrictions="Non-commercial restriction applies. Commercial/API distribution forbidden without explicit waiver.",
         quarantine_reason="WHO CC BY-NC-SA 3.0 IGO non-commercial restriction prevents public/commercial API redistribution without written permission.",
-        third_party_permission_status="PENDING",
-        third_party_permission_notes="Pending commercial waiver or formal permission from WHO.",
+        third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
+        third_party_permission_notes="Commercial waiver or formal written permission from WHO is required for public/commercial API redistribution, but no request has yet been submitted to WHO permissions team.",
     ),
 
     # --------------------------------------------------------------------------
@@ -881,3 +882,287 @@ def export_rights_audit_report(db: Optional[Session] = None) -> List[Dict[str, A
         report.append(item)
 
     return report
+
+
+def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Dict[str, Any]:
+    """
+    Deterministic acceptance-validation audit for CIAPI-L004 candidate documents.
+    Inspects all candidate documents and reports exact status across:
+    - rights evidence URL
+    - review date (rights_reviewed_at)
+    - decision owner (rights_reviewer)
+    - permissible-use determination
+    - attribution decision
+    - publication decision
+    - third-party permission status
+
+    Truthfully separates Engineering Implementation status from L004 Acceptance status.
+    Missing owner review date/reviewer is explicitly flagged as an OPEN acceptance blocker.
+    """
+    if records is None:
+        if db is not None:
+            from app.models import SourceDocument
+            db_docs = db.query(SourceDocument).all()
+            inv_urls = set(RIGHTS_INVENTORY.keys())
+            records = [d for d in db_docs if d.original_url in inv_urls]
+            if not records:
+                records = list_rights_inventory()
+        else:
+            records = list_rights_inventory()
+
+    total = len(records)
+    with_rights_evidence = 0
+    with_review_date = 0
+    with_decision_owner = 0
+    with_permissible_use = 0
+    with_attribution_decision = 0
+    with_publication_decision = 0
+    eligible_count = 0
+    review_required_count = 0
+    permission_pending_count = 0
+    permission_requests_submitted = 0
+    permission_required_not_submitted = 0
+
+    missing_fields_by_url: Dict[str, List[str]] = {}
+    documents_missing_review_date: List[str] = []
+    documents_missing_decision_owner: List[str] = []
+
+    for doc in records:
+        url = getattr(doc, "url", getattr(doc, "original_url", None))
+        missing: List[str] = []
+
+        # 1. Rights evidence URL
+        evidence_url = getattr(doc, "rights_evidence_url", None)
+        if evidence_url and str(evidence_url).strip():
+            with_rights_evidence += 1
+        else:
+            missing.append("rights_evidence_url")
+
+        # 2. Review date
+        reviewed_at = getattr(doc, "rights_reviewed_at", None)
+        if reviewed_at is not None:
+            with_review_date += 1
+        else:
+            missing.append("rights_reviewed_at")
+            documents_missing_review_date.append(url)
+
+        # 3. Decision owner / reviewer
+        reviewer = getattr(doc, "rights_reviewer", None)
+        if reviewer and str(reviewer).strip():
+            with_decision_owner += 1
+        else:
+            missing.append("rights_reviewer")
+            documents_missing_decision_owner.append(url)
+
+        # 4. Permissible use
+        permissible_use = getattr(doc, "permissible_use", None)
+        if permissible_use and str(permissible_use).strip():
+            with_permissible_use += 1
+        else:
+            missing.append("permissible_use")
+
+        # 5. Attribution decision
+        attr_req = getattr(doc, "attribution_required", None)
+        attr_text = getattr(doc, "attribution_text", None)
+        if attr_req is not None and (not attr_req or (attr_text and str(attr_text).strip())):
+            with_attribution_decision += 1
+        else:
+            missing.append("attribution_decision")
+
+        # 6. Publication decision
+        pub_status = getattr(doc, "publication_status", None)
+        if hasattr(pub_status, "value"):
+            pub_status = pub_status.value
+        if pub_status in {
+            PublicationStatus.ELIGIBLE.value,
+            PublicationStatus.REVIEW_REQUIRED.value,
+            PublicationStatus.QUARANTINED.value,
+            PublicationStatus.PERMISSION_PENDING.value,
+            PublicationStatus.REJECTED.value,
+        }:
+            with_publication_decision += 1
+            if pub_status == PublicationStatus.ELIGIBLE.value:
+                eligible_count += 1
+            elif pub_status == PublicationStatus.REVIEW_REQUIRED.value:
+                review_required_count += 1
+            elif pub_status == PublicationStatus.PERMISSION_PENDING.value:
+                permission_pending_count += 1
+        else:
+            missing.append("publication_status")
+
+        # 7. Third-party permission status
+        tp_status = getattr(doc, "third_party_permission_status", None)
+        if tp_status in {"REQUESTED_AWAITING_RESPONSE", "PENDING"}:
+            permission_requests_submitted += 1
+        elif tp_status == "REQUIRED_NOT_SUBMITTED":
+            permission_required_not_submitted += 1
+
+        if missing:
+            missing_fields_by_url[url] = missing
+
+    # Determine blockers
+    blockers: List[str] = []
+    if with_review_date < total:
+        blockers.append(
+            f"{total - with_review_date} candidate documents are missing formal owner review timestamp (rights_reviewed_at is null)"
+        )
+    if with_decision_owner < total:
+        blockers.append(
+            f"{total - with_decision_owner} candidate documents are missing formal owner decision reviewer (rights_reviewer is null)"
+        )
+    if permission_required_not_submitted > 0:
+        blockers.append(
+            f"{permission_required_not_submitted} WHO candidate documents have third-party commercial permission REQUIRED_NOT_SUBMITTED (unsubmitted)"
+        )
+
+    engineering_implementation_complete = (
+        total == 32
+        and with_rights_evidence == total
+        and with_permissible_use == total
+        and with_attribution_decision == total
+        and with_publication_decision == total
+    )
+    owner_review_completed = (with_review_date == total and with_decision_owner == total)
+    l004_acceptance_satisfied = engineering_implementation_complete and owner_review_completed and (len(blockers) == 0)
+
+    return {
+        "total_candidate_documents": total,
+        "with_rights_evidence": with_rights_evidence,
+        "with_review_date": with_review_date,
+        "with_decision_owner": with_decision_owner,
+        "with_permissible_use": with_permissible_use,
+        "with_attribution_decision": with_attribution_decision,
+        "with_publication_decision": with_publication_decision,
+        "eligible_count": eligible_count,
+        "review_required_count": review_required_count,
+        "permission_pending_count": permission_pending_count,
+        "permission_requests_submitted": permission_requests_submitted,
+        "permission_required_not_submitted": permission_required_not_submitted,
+        "engineering_implementation_complete": engineering_implementation_complete,
+        "owner_review_completed": owner_review_completed,
+        "l004_acceptance_satisfied": l004_acceptance_satisfied,
+        "blockers": blockers,
+        "documents_missing_review_date": documents_missing_review_date,
+        "documents_missing_decision_owner": documents_missing_decision_owner,
+        "missing_fields_by_url": missing_fields_by_url,
+    }
+
+
+def record_owner_rights_review(
+    url: str,
+    reviewer: str,
+    reviewed_at: Optional[datetime] = None,
+    publication_status: Optional[str] = None,
+    permissible_use: Optional[str] = None,
+    commercial_redistribution_allowed: Optional[bool] = None,
+    redistribution_allowed: Optional[bool] = None,
+    quarantine_reason: Optional[str] = None,
+    third_party_permission_status: Optional[str] = None,
+    third_party_permission_notes: Optional[str] = None,
+    db: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """
+    Explicit owner review workflow function.
+    Allows repository owner (Prakash) to truthfully record a verified decision
+    on an exact candidate document.
+    """
+    if not reviewer or not str(reviewer).strip():
+        raise ValueError("A decision owner/reviewer name is required to record an owner review.")
+
+    review_timestamp = reviewed_at or datetime.utcnow()
+
+    entry = RIGHTS_INVENTORY.get(url)
+    if entry:
+        updated = DocumentRightsDecision(
+            url=entry.url,
+            source_id=entry.source_id,
+            source_organization=entry.source_organization,
+            title=entry.title,
+            canonical_cancer_slug=entry.canonical_cancer_slug,
+            country_code=entry.country_code,
+            jurisdiction_scope=entry.jurisdiction_scope,
+            publication_status=PublicationStatus(publication_status) if publication_status else entry.publication_status,
+            rights_evidence_url=entry.rights_evidence_url,
+            rights_reviewed_at=review_timestamp,
+            rights_reviewer=str(reviewer).strip(),
+            permissible_use=permissible_use if permissible_use is not None else entry.permissible_use,
+            redistribution_allowed=redistribution_allowed if redistribution_allowed is not None else entry.redistribution_allowed,
+            commercial_redistribution_allowed=commercial_redistribution_allowed if commercial_redistribution_allowed is not None else entry.commercial_redistribution_allowed,
+            full_text_storage_allowed=entry.full_text_storage_allowed,
+            derived_summary_allowed=entry.derived_summary_allowed,
+            attribution_required=entry.attribution_required,
+            attribution_text=entry.attribution_text,
+            reuse_restrictions=entry.reuse_restrictions,
+            quarantine_reason=quarantine_reason if quarantine_reason is not None else entry.quarantine_reason,
+            third_party_permission_status=third_party_permission_status if third_party_permission_status is not None else entry.third_party_permission_status,
+            third_party_permission_notes=third_party_permission_notes if third_party_permission_notes is not None else entry.third_party_permission_notes,
+        )
+        RIGHTS_INVENTORY[url] = updated
+
+    if db:
+        from app.models import SourceDocument
+        doc = db.query(SourceDocument).filter(SourceDocument.original_url == url).first()
+        if doc:
+            doc.rights_reviewed_at = review_timestamp
+            doc.rights_reviewer = str(reviewer).strip()
+            if publication_status:
+                doc.publication_status = str(publication_status)
+            if permissible_use is not None:
+                doc.permissible_use = permissible_use
+            if commercial_redistribution_allowed is not None:
+                doc.commercial_redistribution_allowed = commercial_redistribution_allowed
+            if redistribution_allowed is not None:
+                doc.redistribution_allowed = redistribution_allowed
+            if quarantine_reason is not None:
+                doc.quarantine_reason = quarantine_reason
+            if third_party_permission_status is not None:
+                doc.third_party_permission_status = third_party_permission_status
+            if third_party_permission_notes is not None:
+                doc.third_party_permission_notes = third_party_permission_notes
+            db.flush()
+
+    return {
+        "url": url,
+        "rights_reviewed_at": review_timestamp.isoformat(),
+        "rights_reviewer": str(reviewer).strip(),
+        "status": "RECORDED",
+    }
+
+
+def generate_markdown_inventory_table() -> str:
+    """
+    Deterministically generates the markdown table for all 32 candidate URLs
+    directly from RIGHTS_INVENTORY, ordered by authority then URL.
+    """
+    source_order = ["nci-us", "nhs-uk", "who-global", "cancer-australia", "cdc-us"]
+    sorted_items = sorted(
+        RIGHTS_INVENTORY.items(),
+        key=lambda x: (source_order.index(x[1].source_id) if x[1].source_id in source_order else 99, x[0]),
+    )
+    lines = [
+        "| # | Source ID | Publishing Body | URL | Status | Assigned Quarantine Reason |",
+        "|---|---|---|---|---|---|",
+    ]
+    for i, (url, dec) in enumerate(sorted_items, 1):
+        lines.append(
+            f"| {i} | `{dec.source_id}` | {dec.source_organization} | `{url}` | `{dec.publication_status.value}` | {dec.quarantine_reason} |"
+        )
+    return "\n".join(lines)
+
+
+def extract_candidate_urls_from_markdown(markdown_text: str) -> Set[str]:
+    """
+    Extracts candidate document URLs from markdown tables.
+    Matches lines starting with '|' and containing backticked candidate URLs.
+    """
+    urls: Set[str] = set()
+    for line in markdown_text.splitlines():
+        if line.strip().startswith("|") and "`http" in line:
+            m = re.search(r"`(https?://[^`]+)`", line)
+            if m:
+                u = m.group(1)
+                if any(d in u for d in ["cancer.gov", "nhs.uk", "who.int", "canceraustralia.gov.au", "cdc.gov"]):
+                    if not any(p in u for p in ["/policies/", "/copyright", "/open-access", "agencymaterials"]):
+                        urls.add(u)
+    return urls
+

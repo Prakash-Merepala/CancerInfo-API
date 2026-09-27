@@ -33,7 +33,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.session import get_db
 
-from app.core.constants import LicenseStatus, PublicationStatus, TrustTier
+from app.core.constants import LicenseStatus, PublicationStatus, ThirdPartyPermissionStatus, TrustTier
 from app.core.rights_validation import (
     PublicationEligibilityError,
     assert_publication_eligible,
@@ -44,9 +44,12 @@ from app.database.bootstrap import execute_bootstrap
 from app.database.migration_check import get_alembic_config, get_current_revision, set_alembic_url_safe
 from app.ingestion.rights_inventory import (
     RIGHTS_INVENTORY,
+    audit_candidate_acceptance,
     export_rights_audit_report,
+    extract_candidate_urls_from_markdown,
     get_rights_inventory_entry,
     list_rights_inventory,
+    record_owner_rights_review,
 )
 from app.ingestion.seed import seed_database
 from app.main import app
@@ -270,6 +273,8 @@ def test_who_unresolved_material_is_quarantined_or_permission_pending(test_db_se
         assert doc.is_publication_eligible() is False
         assert doc.commercial_redistribution_allowed is False
         assert "CC BY-NC-SA 3.0 IGO" in doc.quarantine_reason
+        assert doc.third_party_permission_status == ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value
+        assert "no request has yet been submitted" in doc.third_party_permission_notes.lower() or "not yet been submitted" in doc.third_party_permission_notes.lower()
 
 
 def test_cancer_australia_unresolved_material_is_review_required(test_db_session):
@@ -406,3 +411,124 @@ def test_l004_migration_upgrade_and_downgrade(tmp_path):
     sd_cols = {c["name"] for c in inspector.get_columns("source_documents")}
     assert "publication_status" in sd_cols
     engine.dispose()
+
+
+def test_documented_candidate_urls_match_registry_and_seed(test_db_session):
+    """
+    Mithra acceptance correction: Handoff and candidate report URL sets
+    must not diverge from the registry or seeded candidate set.
+    Asserts: set(documented_candidate_urls) == set(RIGHTS_INVENTORY.keys()) == set(seed_candidate_urls)
+    """
+    inv_urls = set(RIGHTS_INVENTORY.keys())
+    seed_urls = {d.original_url for d in test_db_session.query(SourceDocument).all()}
+
+    with open("docs/HANDOFF_TO_MITHRA.md") as f:
+        handoff_urls = extract_candidate_urls_from_markdown(f.read())
+
+    with open("candidate_report_CIAPI-L004.md") as f:
+        report_urls = extract_candidate_urls_from_markdown(f.read())
+
+    assert len(inv_urls) == 32
+    assert len(seed_urls) == 32
+    assert len(handoff_urls) == 32
+    assert len(report_urls) == 32
+
+    assert handoff_urls == inv_urls
+    assert report_urls == inv_urls
+    assert seed_urls == inv_urls
+
+
+def test_acceptance_validation_reports_missing_owner_review_as_blocker(test_db_session):
+    """
+    Mithra acceptance correction: Acceptance validation must truthfully report
+    missing rights_reviewed_at and rights_reviewer as OPEN blockers.
+    """
+    report = audit_candidate_acceptance(db=test_db_session)
+
+    assert report["total_candidate_documents"] == 32
+    assert report["with_rights_evidence"] == 32
+    assert report["with_permissible_use"] == 32
+    assert report["with_attribution_decision"] == 32
+    assert report["with_publication_decision"] == 32
+
+    # Truthful check: Owner review has NOT yet occurred
+    assert report["with_review_date"] == 0
+    assert report["with_decision_owner"] == 0
+    assert report["owner_review_completed"] is False
+    assert report["l004_acceptance_satisfied"] is False
+
+    # Blockers must be explicitly reported
+    assert len(report["blockers"]) >= 2
+    assert any("missing formal owner review timestamp" in b.lower() for b in report["blockers"])
+    assert any("missing formal owner decision reviewer" in b.lower() for b in report["blockers"])
+    assert any("who candidate documents" in b.lower() for b in report["blockers"])
+
+    assert len(report["documents_missing_review_date"]) == 32
+    assert len(report["documents_missing_decision_owner"]) == 32
+
+
+def test_third_party_permission_state_distinguishes_not_requested_from_submitted():
+    """
+    Mithra acceptance correction: Third-party permission state must distinguish
+    'not requested' (REQUIRED_NOT_SUBMITTED) from 'submitted and awaiting response'.
+    """
+    doc = SourceDocument(
+        id="test-doc-tp",
+        source_id="who-global",
+        original_url="https://example.org/who",
+        title="WHO Test",
+        country_code="GLOBAL",
+        content_hash="hash",
+        publication_status=PublicationStatus.PERMISSION_PENDING.value,
+        rights_evidence_url="https://example.org/rights",
+        rights_reviewed_at=datetime.utcnow(),
+        rights_reviewer="Auditor",
+        redistribution_allowed=True,
+        commercial_redistribution_allowed=True,
+        third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
+    )
+    is_eligible, reasons = evaluate_publication_eligibility(doc)
+    assert is_eligible is False
+    assert any("REQUIRED_NOT_SUBMITTED" in r for r in reasons)
+
+    # Change to REQUESTED_AWAITING_RESPONSE -> still not eligible while response pending
+    doc.third_party_permission_status = ThirdPartyPermissionStatus.REQUESTED_AWAITING_RESPONSE.value
+    is_eligible, reasons = evaluate_publication_eligibility(doc)
+    assert is_eligible is False
+    assert any("REQUESTED_AWAITING_RESPONSE" in r for r in reasons)
+
+    # Change to GRANTED and clear publication status to ELIGIBLE -> now eligible
+    doc.third_party_permission_status = ThirdPartyPermissionStatus.GRANTED.value
+    doc.publication_status = PublicationStatus.ELIGIBLE.value
+    is_eligible, reasons = evaluate_publication_eligibility(doc)
+    assert is_eligible is True
+
+
+def test_owner_review_workflow_truthful_recording(test_db_session):
+    """
+    Verifies that the owner review workflow API record_owner_rights_review
+    truthfully records review date and reviewer without fabricating data.
+    """
+    with pytest.raises(ValueError):
+        record_owner_rights_review(
+            "https://www.cancer.gov/types/breast",
+            reviewer="",
+            db=test_db_session,
+        )
+
+    res = record_owner_rights_review(
+        "https://www.cancer.gov/types/breast",
+        reviewer="Jaya Prakash Merepala",
+        reviewed_at=datetime.utcnow(),
+        db=test_db_session,
+    )
+    assert res["status"] == "RECORDED"
+    assert res["rights_reviewer"] == "Jaya Prakash Merepala"
+
+    # Verify updated in database
+    doc = test_db_session.query(SourceDocument).filter_by(
+        original_url="https://www.cancer.gov/types/breast"
+    ).one()
+    assert doc.rights_reviewer == "Jaya Prakash Merepala"
+    assert doc.rights_reviewed_at is not None
+

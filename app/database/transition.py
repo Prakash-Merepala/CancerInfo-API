@@ -42,6 +42,12 @@ def inspect_transition_readiness(engine: Engine) -> Dict[str, Any]:
     if "source_documents" not in tables or "consensus_fact_sources" not in tables:
         raise TransitionError("Database does not contain required tables (source_documents, consensus_fact_sources).")
 
+    if current_rev != head_rev:
+        raise TransitionError(
+            f"Database schema revision '{current_rev}' is not at supported head revision '{head_rev}'. "
+            f"Run 'alembic upgrade head' before running transition."
+        )
+
     sd_cols = {c["name"] for c in inspector.get_columns("source_documents")}
     cfs_cols = {c["name"] for c in inspector.get_columns("consensus_fact_sources")}
 
@@ -62,7 +68,7 @@ def inspect_transition_readiness(engine: Engine) -> Dict[str, Any]:
     return {
         "current_revision": current_rev,
         "head_revision": head_rev,
-        "is_at_head": current_rev == head_rev,
+        "is_at_head": True,
         "tables": sorted(list(tables)),
     }
 
@@ -75,6 +81,11 @@ def transition_populated_l003_database(
     Executes controlled, repeat-safe transition on a populated L003 database.
     Populates document rights decisions and consensus citation linkages without
     reseeding or overwriting existing quotes, attribution, history, or clinical content.
+
+    Preserves existing owner reviews, evidence, attribution, and permission references
+    across process restarts and repeated runs.
+    Enforces the supported schema revision and verifies citation linkage postconditions
+    before committing. Never reports SUCCESS with unresolved links.
     """
     readiness = inspect_transition_readiness(engine)
 
@@ -101,26 +112,44 @@ def transition_populated_l003_database(
             ).first()
 
             if doc:
-                # Update rights metadata fields only
-                doc.publication_status = decision.publication_status.value if hasattr(decision.publication_status, "value") else str(decision.publication_status)
-                doc.rights_evidence_url = decision.rights_evidence_url
-                doc.rights_reviewed_at = decision.rights_reviewed_at
-                doc.rights_reviewer = decision.rights_reviewer
-                doc.permissible_use = decision.permissible_use
-                doc.redistribution_allowed = decision.redistribution_allowed
-                doc.commercial_redistribution_allowed = decision.commercial_redistribution_allowed
-                doc.full_text_storage_allowed = decision.full_text_storage_allowed
-                doc.derived_summary_allowed = decision.derived_summary_allowed
-                doc.attribution_required = decision.attribution_required
-                doc.attribution_text = decision.attribution_text
-                doc.reuse_restrictions = decision.reuse_restrictions
-                doc.quarantine_reason = decision.quarantine_reason
-                doc.third_party_permission_status = decision.third_party_permission_status
-                doc.third_party_permission_notes = decision.third_party_permission_notes
+                # Check whether doc already has an owner review recorded
+                has_owner_review = (doc.rights_reviewed_at is not None) or bool(doc.rights_reviewer and str(doc.rights_reviewer).strip())
+
+                if has_owner_review:
+                    # PRESERVE existing owner reviews, evidence, attribution, and permission references across restarts and repeated runs
+                    # Do NOT overwrite rights_reviewed_at or rights_reviewer with None or defaults
+                    if not doc.rights_evidence_url and decision.rights_evidence_url:
+                        doc.rights_evidence_url = decision.rights_evidence_url
+                    if not doc.permissible_use and decision.permissible_use:
+                        doc.permissible_use = decision.permissible_use
+                    if not doc.attribution_text and decision.attribution_text:
+                        doc.attribution_text = decision.attribution_text
+                    if not doc.third_party_permission_notes and decision.third_party_permission_notes:
+                        doc.third_party_permission_notes = decision.third_party_permission_notes
+                else:
+                    # Document has not been owner-reviewed; populate rights metadata from authoritative registry
+                    doc.publication_status = decision.publication_status.value if hasattr(decision.publication_status, "value") else str(decision.publication_status)
+                    doc.rights_evidence_url = decision.rights_evidence_url
+                    doc.rights_reviewed_at = decision.rights_reviewed_at
+                    doc.rights_reviewer = decision.rights_reviewer
+                    doc.permissible_use = decision.permissible_use
+                    doc.redistribution_allowed = decision.redistribution_allowed
+                    doc.commercial_redistribution_allowed = decision.commercial_redistribution_allowed
+                    doc.full_text_storage_allowed = decision.full_text_storage_allowed
+                    doc.derived_summary_allowed = decision.derived_summary_allowed
+                    doc.attribution_required = decision.attribution_required
+                    doc.attribution_text = decision.attribution_text
+                    doc.reuse_restrictions = decision.reuse_restrictions
+                    doc.quarantine_reason = decision.quarantine_reason
+                    tp_status = decision.third_party_permission_status
+                    doc.third_party_permission_status = tp_status.value if hasattr(tp_status, "value") else str(tp_status)
+                    doc.third_party_permission_notes = decision.third_party_permission_notes
+
                 docs_updated += 1
             else:
                 # Document does not exist in populated database; insert candidate document safely
                 cancer_match = session.query(Cancer).filter(Cancer.slug == decision.canonical_cancer_slug).first()
+                tp_status = decision.third_party_permission_status
                 new_doc = SourceDocument(
                     id=f"doc-{uuid.uuid4().hex[:12]}",
                     source_id=decision.source_id,
@@ -147,7 +176,7 @@ def transition_populated_l003_database(
                     attribution_text=decision.attribution_text,
                     reuse_restrictions=decision.reuse_restrictions,
                     quarantine_reason=decision.quarantine_reason,
-                    third_party_permission_status=decision.third_party_permission_status,
+                    third_party_permission_status=tp_status.value if hasattr(tp_status, "value") else str(tp_status),
                     third_party_permission_notes=decision.third_party_permission_notes,
                 )
                 session.add(new_doc)
@@ -173,6 +202,30 @@ def transition_populated_l003_database(
                 citation.source_document_id = target_doc.id
                 citations_linked += 1
 
+        # 3. Verify citation linkage and postconditions BEFORE committing
+        remaining_unlinked = [
+            c for c in all_citations
+            if c.source_document_id is None
+        ]
+        if remaining_unlinked:
+            unlinked_urls = sorted({c.source_url for c in remaining_unlinked})
+            raise TransitionError(
+                f"Transition postcondition failed: {len(remaining_unlinked)} consensus citations remain unlinked to SourceDocument. "
+                f"Unmatched URLs: {unlinked_urls}. Transition aborted."
+            )
+
+        # Verify candidate documents postcondition: candidate documents must have rights evidence
+        for d in session.query(SourceDocument).all():
+            if d.original_url in RIGHTS_INVENTORY:
+                if not d.rights_evidence_url:
+                    raise TransitionError(
+                        f"Transition postcondition failed: candidate document '{d.original_url}' is missing rights_evidence_url."
+                    )
+                if not d.publication_status:
+                    raise TransitionError(
+                        f"Transition postcondition failed: candidate document '{d.original_url}' is missing publication_status."
+                    )
+
         if dry_run:
             session.rollback()
             return {
@@ -185,6 +238,7 @@ def transition_populated_l003_database(
                 "documents_to_create": docs_created,
                 "citations_to_link": citations_linked,
                 "citations_already_linked": citations_already_linked,
+                "remaining_unlinked_citations": 0,
                 "message": "Dry-run validation successful. No mutations applied.",
             }
 
@@ -192,9 +246,6 @@ def transition_populated_l003_database(
 
         post_total_docs = session.query(SourceDocument).count()
         post_total_citations = session.query(ConsensusFactSource).count()
-        remaining_unlinked = session.query(ConsensusFactSource).filter(
-            ConsensusFactSource.source_document_id.is_(None)
-        ).count()
 
         return {
             "status": "SUCCESS",
@@ -205,7 +256,7 @@ def transition_populated_l003_database(
             "citations_already_linked": citations_already_linked,
             "post_total_documents": post_total_docs,
             "post_total_citations": post_total_citations,
-            "remaining_unlinked_citations": remaining_unlinked,
+            "remaining_unlinked_citations": 0,
             "message": "Populated L003 database successfully transitioned to L004 in a single atomic transaction.",
         }
 

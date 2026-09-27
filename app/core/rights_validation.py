@@ -82,40 +82,55 @@ def evaluate_publication_eligibility(
     if not reviewer or not str(reviewer).strip():
         reasons.append("Missing required rights reviewer or decision owner (rights_reviewer)")
 
-    # 5. Redistribution permissions & consistency
-    redist_allowed = getattr(doc, "redistribution_allowed", False)
-    comm_allowed = getattr(doc, "commercial_redistribution_allowed", False)
+    # 5. Permissible use evidence
+    permissible_use = getattr(doc, "permissible_use", None)
+    if not permissible_use or not str(permissible_use).strip():
+        reasons.append("Missing required permissible-use evidence or determination (permissible_use)")
 
-    if not redist_allowed:
+    # 6. Redistribution permissions & consistency
+    redist_allowed = getattr(doc, "redistribution_allowed", None)
+    comm_allowed = getattr(doc, "commercial_redistribution_allowed", None)
+
+    if redist_allowed is None:
+        reasons.append("Missing explicit decision for redistribution_allowed (redistribution is not allowed)")
+    elif not redist_allowed:
         reasons.append("Document-level redistribution is not allowed (redistribution_allowed=False)")
 
-    if not comm_allowed:
+    if comm_allowed is None:
+        reasons.append("Missing explicit decision for commercial_redistribution_allowed (commercial redistribution is not allowed)")
+    elif not comm_allowed:
         reasons.append("Document-level commercial/API redistribution is not allowed (commercial_redistribution_allowed=False)")
 
     if comm_allowed and not redist_allowed:
         reasons.append("Inconsistent evidence: commercial_redistribution_allowed is True while redistribution_allowed is False")
 
-    # 6. Storage and derivative permissions
+    # 7. Explicit decisions for storage and derivative permissions
     storage_allowed = getattr(doc, "full_text_storage_allowed", None)
-    if storage_allowed is False:
+    if storage_allowed is None:
+        reasons.append("Missing explicit decision for full_text_storage_allowed (cannot be None)")
+    elif not storage_allowed:
         reasons.append("Document does not allow full text storage (full_text_storage_allowed=False)")
 
     derived_allowed = getattr(doc, "derived_summary_allowed", None)
-    if derived_allowed is False:
+    if derived_allowed is None:
+        reasons.append("Missing explicit decision for derived_summary_allowed (cannot be None)")
+    elif not derived_allowed:
         reasons.append("Document does not allow derived summary generation (derived_summary_allowed=False)")
 
-    # 7. Quarantine reason consistency
+    # 8. Attribution consistency and explicit decision
+    attr_required = getattr(doc, "attribution_required", None)
+    attr_text = getattr(doc, "attribution_text", None)
+    if attr_required is None:
+        reasons.append("Missing explicit decision for attribution_required (cannot be None)")
+    elif attr_required and (not attr_text or not str(attr_text).strip()):
+        reasons.append("Inconsistent evidence: attribution_required is True but attribution_text is missing or empty")
+
+    # 9. Quarantine reason consistency
     quarantine_reason = getattr(doc, "quarantine_reason", None)
     if quarantine_reason and str(quarantine_reason).strip():
         reasons.append(f"Document has active quarantine reason: {quarantine_reason}")
 
-    # 8. Attribution consistency
-    attr_required = getattr(doc, "attribution_required", False)
-    attr_text = getattr(doc, "attribution_text", None)
-    if attr_required and (not attr_text or not str(attr_text).strip()):
-        reasons.append("Inconsistent evidence: attribution_required is True but attribution_text is missing or empty")
-
-    # 9. Third-party permissions fail-closed evaluation
+    # 10. Third-party permissions fail-closed evaluation
     tp_status = getattr(doc, "third_party_permission_status", None)
     if hasattr(tp_status, "value"):
         tp_status = tp_status.value
@@ -126,6 +141,10 @@ def evaluate_publication_eligibility(
         reasons.append(f"Unknown third-party permission decision: '{tp_status}' (must be a valid ThirdPartyPermissionStatus)")
     elif tp_status not in ELIGIBLE_THIRD_PARTY_STATUSES:
         reasons.append(f"Unresolved third-party permission status: '{tp_status}' (only NOT_APPLICABLE or GRANTED may be eligible)")
+    elif tp_status in (ThirdPartyPermissionStatus.GRANTED.value, "GRANTED"):
+        tp_notes = getattr(doc, "third_party_permission_notes", None)
+        if not tp_notes or not str(tp_notes).strip():
+            reasons.append("Inconsistent evidence: third-party permission is GRANTED but supporting evidence/notes are missing (third_party_permission_notes)")
 
     is_eligible = len(reasons) == 0
     return is_eligible, reasons

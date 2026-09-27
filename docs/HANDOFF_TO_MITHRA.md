@@ -3,7 +3,7 @@
 **Task:** CIAPI-L004 — Resolve Document Reuse Rights and Quarantine Unresolved Material  
 **Repository:** `Prakash-Merepala/CancerInfo-API`  
 **Current Branch:** `CIAPI-L004-resolve-document-reuse-rights-and-quarantine`  
-**Reviewed Commit SHA:** `a8f50395eaed22db49193d2dad249ade17ec5b9d`  
+**Reviewed Commit SHA:** `2057d1c6fa10b44a45aeafb70678ef620237e2e9`  
 **Actual Remote L003 Merge Base:** `00356293d28a3cdb99320db5dbcd7e13b2766fd1`  
 **Reviewer:** **Mithra**  
 **Engineering Author:** Antigravity  
@@ -19,10 +19,10 @@ To maintain complete transparency and truthfulness in accordance with Mithra's r
 │  ENGINEERING IMPLEMENTATION STATUS: COMPLETE                                    │
 │  - Linear reversible Alembic migration (0002_document_rights, <=32 chars)       │
 │  - Exact document rights models, relationships, and consolidated validator      │
-│  - 32-URL canonical rights registry & dynamic consensus citation linkage        │
-│  - Populated L003 transition tooling (scripts/transition_l004.py, repeat-safe)  │
-│  - API response schemas exposing document-level provenance and permissions      │
-│  - Full automated test suite: 97/97 tests passing (22 rights, 24 migrations)    │
+│  - Read-only inspection commands & startup schema validation                    │
+│  - Explicit, guarded legacy revision repair with verified persistence           │
+│  - Populated transition preserving reviews, references, and verifying links     │
+│  - Full automated test suite: 101 passed, 1 skipped (27 rights, 24 migrations)  │
 ├────────────────────────────────────────────────────────────────────────────────┤
 │  L004 ACCEPTANCE STATUS: BLOCKED ON OWNER REVIEW (OPEN)                        │
 │  - 32 of 32 candidate documents have primary rights evidence URLs collected     │
@@ -106,11 +106,13 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
    - Evaluates whether acceptance criteria are truthfully satisfied.
    - Categorizes corpus:
      - `owner_approved_eligible_corpus`: 0
+     - `inconsistent_eligible_records`: 0
      - `unresolved_candidate_decisions`: 28 (quarantined under `REVIEW_REQUIRED`)
      - `unresolved_permission_decisions`: 4 (quarantined under `PERMISSION_PENDING`)
-     - `excluded_quarantined_documents`: 4
+     - `explicitly_excluded_documents`: 0 (quarantined or rejected with recorded final review)
      - `excluded_untracked_documents`: 0
    - Prevents submitted-but-unresolved permissions (`REQUESTED_AWAITING_RESPONSE`) from producing false acceptance.
+   - Rejects single-record eligible corpus; requires an owner-approved eligible corpus across authoritative sources.
    - Returns structured blockers and deficiency breakdowns.
 
 2. **Executable Acceptance Audit CLI (`scripts/audit_rights_acceptance.py`)**:
@@ -119,6 +121,9 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
 
 3. **Controlled Transition Tool for Populated L003 Databases (`app/database/transition.py` & `scripts/transition_l004.py`)**:
    - Upgrades populated L003 databases to L004 schema without reseeding or overwriting existing content, quotes, or attributions.
+   - Preserves existing owner reviews, evidence, attribution, and permission references across process restarts and repeated executions.
+   - Enforces the supported schema revision (`0002_document_rights`).
+   - Verifies citation linkage and document postconditions before commit; never reports SUCCESS with unresolved links.
    - Atomic, transactional, and repeat-safe (idempotent).
    - CLI usage:
      ```bash
@@ -133,68 +138,60 @@ To ensure acceptance status cannot be fabricated or silently drifted, and to pro
    - Validates candidate URL targets against registry (rejects unknown targets).
    - Validates `rights_evidence_url` format (requires `http://` or `https://`).
    - Supports permission reference tracking (`permission_reference`).
-   - Supports transactional persistence (`db=session, commit=True` commits to DB; `commit=False` flushes within calling transaction).
-   - Usage example:
-     ```python
-     from app.ingestion.rights_inventory import record_owner_rights_review
+   - Supports full storage, derivative, attribution, and quarantine clearing settings.
+   - Preserves static `RIGHTS_INVENTORY` baseline while persisting reviews durably into database transactions (`db=session, commit=True`).
 
-     record_owner_rights_review(
-         url="https://www.cancer.gov/types/breast",
-         reviewer="Jaya Prakash Merepala",
-         reviewed_at=datetime.utcnow(),
-         publication_status="REVIEW_REQUIRED",  # or ELIGIBLE if cleared
-         rights_evidence_url="https://www.cancer.gov/policies/copyright-reuse",
-         permissible_use="U.S. Government work verified free of third-party assets",
-         db=db_session,
-         commit=True,
-     )
-     ```
+5. **Read-Only Schema Verification & Explicit Guarded Legacy Repair (`app/database/migration_check.py`)**:
+   - `get_current_revision(engine)`: Strictly read-only; performs zero mutations.
+   - `verify_database_schema_at_head(engine)`: Strictly read-only; raises `RuntimeError` if database has legacy or outdated revisions without mutation.
+   - `repair_legacy_revision(engine)`: Explicit, guarded repair operation for disposable SQLite/dev databases stamped with `0002_document_rights_and_consensus_linkage`. Updates within an atomic transaction, verifies persisted state on disk, and never suppresses repair errors.
 
 ---
 
-## 5. Verification & Test Evidence (97 / 97 Tests Passing)
+## 5. Verification & Test Evidence (101 Passed, 1 Skipped)
 
 ### Test Suite Execution:
 ```text
 ============================= test session starts ==============================
 platform darwin -- Python 3.11.16, pytest-9.1.1, pluggy-1.6.0
 rootdir: /Users/prakash/VS Code/CancerInfo-API
-collected 97 items
+collected 102 items
 
-tests/test_admin_and_pipeline.py ....                                    [  4%]
-tests/test_bootstrap.py ..........                                       [ 14%]
-tests/test_cancers.py .......                                            [ 21%]
-tests/test_consensus_facts.py ......                                     [ 27%]
-tests/test_document_rights.py ......................                     [ 50%]
-tests/test_health.py ...                                                 [ 53%]
-tests/test_migrations.py ........................                        [ 78%]
-tests/test_neon_clean_guard.py .......                                   [ 85%]
-tests/test_search.py ....                                                [ 89%]
-tests/test_sources.py .....                                              [ 94%]
+tests/test_admin_and_pipeline.py ....                                    [  3%]
+tests/test_bootstrap.py ..........                                       [ 13%]
+tests/test_cancers.py .......                                            [ 20%]
+tests/test_consensus_facts.py ......                                     [ 26%]
+tests/test_document_rights.py ..........................s                [ 52%]
+tests/test_health.py ...                                                 [ 55%]
+tests/test_migrations.py ........................                        [ 79%]
+tests/test_neon_clean_guard.py .......                                   [ 86%]
+tests/test_search.py ....                                                [ 90%]
+tests/test_sources.py .....                                              [ 95%]
 tests/test_taxonomy_and_normalization.py .....                           [100%]
 
-======================== 97 passed, 1 warning in 5.11s =========================
+================== 101 passed, 1 skipped, 1 warning in 5.50s ===================
 ```
 
 ### Environment Verification Breakdown:
 
 1. **Local SQLite Test Environment**:
-   - All 97 tests pass cleanly, including:
-     - 22 document rights and transition tests in `tests/test_document_rights.py`.
+   - 101 tests pass cleanly, including:
+     - 26 document rights and transition tests in `tests/test_document_rights.py`.
      - 24 migration and schema tests in `tests/test_migrations.py`.
-     - Populated upgrade and transition test (`test_populated_l003_database_upgrade_and_transition`).
-     - Legacy long identifier remapping test (`test_legacy_long_revision_identifier_remapped_transparently`).
-     - Consolidated publication eligibility fail-closed tests (`test_consolidated_publication_eligibility_rejects_unknown_missing_and_inconsistent`).
-     - Hardened acceptance audit test (`test_audit_candidate_acceptance_submitted_permissions_do_not_produce_acceptance`).
-     - Durable owner review records test (`test_owner_review_records_durable_and_auditable`).
+     - Preserved owner reviews and permission references across restarts and repeat execution (`test_populated_transition_preserves_owner_reviews_and_permission_references`).
+     - Postcondition failure and atomic rollback on unresolved links (`test_transition_fails_and_rolls_back_on_unresolved_links`).
+     - Schema revision enforcement (`test_transition_enforces_supported_schema_revision`).
+     - Rejection of inconsistent ELIGIBLE records and single-record corpus (`test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record`).
+     - Read-only inspection and startup schema check verification.
+     - Legacy revision repair modeling actual supported disposable SQLite scenario (`test_legacy_long_revision_identifier_remapped_transparently`).
 
-2. **PostgreSQL CI Run 36301697756 Resolution**:
-   - **Root Cause**: Alembic stores revision IDs in the `alembic_version` table with column `version_num VARCHAR(32)`. The original L004 migration identifier `0002_document_rights_and_consensus_linkage` had 43 characters, causing PostgreSQL to reject it with `StringDataRightTruncation: value too long for type character varying(32)`. (SQLite does not enforce `VARCHAR` lengths, which is why it passed in SQLite but failed in PostgreSQL CI).
-   - **Resolution**: Renamed migration script and revision ID to `0002_document_rights` (20 characters <= 32).
-   - **Backward Compatibility**: Any disposable SQLite databases previously stamped with `0002_document_rights_and_consensus_linkage` are automatically remapped to `0002_document_rights` via `LEGACY_REVISION_ALIASES` in `app/database/migration_check.py` and transparent connection probe in `alembic/env.py`.
+2. **PostgreSQL CI Resolution (CI Runs 36301697756 & 36341720113)**:
+   - **CI Run 36301697756**: Original revision ID was 43 chars, overflowing PostgreSQL's `alembic_version.version_num VARCHAR(32)`. Resolved by shortening to `0002_document_rights` (20 chars).
+   - **CI Run 36341720113**: The previous test attempted to insert the oversized 43-character identifier into PostgreSQL `VARCHAR(32)` during migration tests. Resolved by modeling the actual supported legacy scenario: disposable SQLite databases where VARCHAR length is not enforced. On PostgreSQL, the test asserts that `alembic_version.version_num` preserves `VARCHAR(32)` without weakening schema, while SQLite tests explicit repair via `repair_legacy_revision(engine)`.
+   - **Populated PostgreSQL Transition Coverage**: Added `test_populated_postgresql_transition`, which executes populated L003 upgrade, dry-run transition, apply transition, and repeat-safe execution against disposable PostgreSQL when `POSTGRES_TEST_URL` is set in CI.
 
-3. **Skipped Checks & Out-of-Scope Items**:
-   - **Production Neon PostgreSQL Database**: Direct connections were strictly prohibited and not executed.
+3. **Explicitly Identified Skipped or Unavailable Checks**:
+   - **Production Neon PostgreSQL Database**: Direct connections were strictly prohibited and not executed (engineering safety guardrails enforced).
    - **Live Scraping & Clinical Fact Verification**: Out of scope for CIAPI-L004 rights architecture.
    - **Universal Publication-Response Gate**: Out of scope for CIAPI-L004; designated for CIAPI-L008.
 

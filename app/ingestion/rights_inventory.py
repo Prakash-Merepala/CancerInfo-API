@@ -943,6 +943,7 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
     unresolved_candidate_decisions: List[str] = []
     unresolved_permission_decisions: List[str] = []
     excluded_quarantined_documents: List[str] = []
+    inconsistent_eligible_records: List[str] = []
 
     missing_fields_by_url: Dict[str, List[str]] = {}
     documents_missing_review_date: List[str] = []
@@ -1010,7 +1011,8 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
                 unresolved_candidate_decisions.append(url)
             elif pub_status == PublicationStatus.PERMISSION_PENDING.value:
                 permission_pending_count += 1
-                excluded_quarantined_documents.append(url)
+                if url not in unresolved_permission_decisions:
+                    unresolved_permission_decisions.append(url)
             elif pub_status in {PublicationStatus.QUARANTINED.value, PublicationStatus.REJECTED.value}:
                 excluded_quarantined_documents.append(url)
         else:
@@ -1022,10 +1024,12 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
             tp_status = tp_status.value
         if tp_status in {"REQUESTED_AWAITING_RESPONSE", "PENDING"}:
             permission_requests_submitted += 1
-            unresolved_permission_decisions.append(url)
+            if url not in unresolved_permission_decisions:
+                unresolved_permission_decisions.append(url)
         elif tp_status == "REQUIRED_NOT_SUBMITTED":
             permission_required_not_submitted += 1
-            unresolved_permission_decisions.append(url)
+            if url not in unresolved_permission_decisions:
+                unresolved_permission_decisions.append(url)
 
         # 8. Actual publication eligibility evaluation (fail-closed)
         is_eligible, deficiencies = evaluate_publication_eligibility(doc)
@@ -1033,6 +1037,8 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
             owner_approved_eligible_corpus.append(url)
         else:
             eligibility_deficiencies_by_url[url] = deficiencies
+            if pub_status == PublicationStatus.ELIGIBLE.value:
+                inconsistent_eligible_records.append(url)
 
         if missing:
             missing_fields_by_url[url] = missing
@@ -1047,6 +1053,14 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         blockers.append(
             f"{total - with_decision_owner} candidate documents are missing formal owner decision reviewer (rights_reviewer is null)"
         )
+    if len(inconsistent_eligible_records) > 0:
+        blockers.append(
+            f"{len(inconsistent_eligible_records)} candidate documents marked ELIGIBLE fail publication eligibility validation (inconsistent/incomplete evidence)"
+        )
+    if len(unresolved_candidate_decisions) > 0:
+        blockers.append(
+            f"{len(unresolved_candidate_decisions)} candidate documents remain unresolved under REVIEW_REQUIRED"
+        )
     if permission_requests_submitted > 0:
         blockers.append(
             f"{permission_requests_submitted} candidate documents have third-party commercial permission REQUESTED_AWAITING_RESPONSE (submitted but still unresolved; awaiting response)"
@@ -1058,6 +1072,10 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
     if len(owner_approved_eligible_corpus) == 0:
         blockers.append(
             "0 candidate documents are currently verified publication-eligible (entire candidate corpus is quarantined/review-required)"
+        )
+    elif len(owner_approved_eligible_corpus) == 1:
+        blockers.append(
+            "Only 1 candidate document is marked eligible; acceptance requires an owner-approved eligible corpus across authoritative sources, not merely a single isolated record"
         )
 
     engineering_implementation_complete = (
@@ -1073,11 +1091,15 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         and len(documents_missing_review_date) == 0
         and len(documents_missing_decision_owner) == 0
     )
-    # L004 acceptance requires all candidate documents to be reviewed, permissions resolved, and no blockers
+    # L004 acceptance requires all candidate documents to be reviewed, permissions resolved,
+    # no unresolved candidates or inconsistent records, and an owner-approved eligible corpus
     l004_acceptance_satisfied = (
         engineering_implementation_complete
         and owner_review_completed
+        and len(unresolved_candidate_decisions) == 0
         and len(unresolved_permission_decisions) == 0
+        and len(inconsistent_eligible_records) == 0
+        and len(owner_approved_eligible_corpus) >= 2
         and len(blockers) == 0
     )
 
@@ -1096,10 +1118,14 @@ def audit_candidate_acceptance(records=None, db: Optional[Session] = None) -> Di
         "permission_required_not_submitted": permission_required_not_submitted,
         "owner_approved_eligible_corpus_count": len(owner_approved_eligible_corpus),
         "owner_approved_eligible_corpus": owner_approved_eligible_corpus,
+        "inconsistent_eligible_records_count": len(inconsistent_eligible_records),
+        "inconsistent_eligible_records": inconsistent_eligible_records,
         "unresolved_candidate_decisions_count": len(unresolved_candidate_decisions),
         "unresolved_candidate_decisions": unresolved_candidate_decisions,
         "unresolved_permission_decisions_count": len(unresolved_permission_decisions),
         "unresolved_permission_decisions": unresolved_permission_decisions,
+        "explicitly_excluded_documents_count": len(excluded_quarantined_documents),
+        "explicitly_excluded_documents": excluded_quarantined_documents,
         "excluded_quarantined_documents_count": len(excluded_quarantined_documents),
         "excluded_quarantined_documents": excluded_quarantined_documents,
         "excluded_untracked_documents_count": len(excluded_untracked_documents),
@@ -1128,8 +1154,14 @@ def record_owner_rights_review(
     third_party_permission_status: Optional[Union[str, ThirdPartyPermissionStatus]] = None,
     third_party_permission_notes: Optional[str] = None,
     permission_reference: Optional[str] = None,
+    full_text_storage_allowed: Optional[bool] = None,
+    derived_summary_allowed: Optional[bool] = None,
+    attribution_required: Optional[bool] = None,
+    attribution_text: Optional[str] = None,
+    clear_quarantine: bool = False,
     db: Optional[Session] = None,
     commit: bool = True,
+    update_inventory: bool = False,
 ) -> Dict[str, Any]:
     """
     Explicit, durable, and auditable owner review workflow function.
@@ -1220,7 +1252,8 @@ def record_owner_rights_review(
             third_party_permission_status=tp_stat,
             third_party_permission_notes=combined_notes if combined_notes is not None else entry.third_party_permission_notes,
         )
-        RIGHTS_INVENTORY[url] = updated
+        if update_inventory:
+            RIGHTS_INVENTORY[url] = updated
 
     # 5. Handle database transaction persistence
     persisted_to_database = False
@@ -1237,14 +1270,27 @@ def record_owner_rights_review(
             if rights_evidence_url:
                 db_doc.rights_evidence_url = str(rights_evidence_url).strip()
             if publication_status:
-                db_doc.publication_status = str(publication_status.value if hasattr(publication_status, "value") else publication_status)
+                pub_val = str(publication_status.value if hasattr(publication_status, "value") else publication_status)
+                db_doc.publication_status = pub_val
+                if pub_val == PublicationStatus.ELIGIBLE.value:
+                    db_doc.quarantine_reason = None
             if permissible_use is not None:
                 db_doc.permissible_use = permissible_use
             if commercial_redistribution_allowed is not None:
                 db_doc.commercial_redistribution_allowed = commercial_redistribution_allowed
             if redistribution_allowed is not None:
                 db_doc.redistribution_allowed = redistribution_allowed
-            if quarantine_reason is not None:
+            if full_text_storage_allowed is not None:
+                db_doc.full_text_storage_allowed = full_text_storage_allowed
+            if derived_summary_allowed is not None:
+                db_doc.derived_summary_allowed = derived_summary_allowed
+            if attribution_required is not None:
+                db_doc.attribution_required = attribution_required
+            if attribution_text is not None:
+                db_doc.attribution_text = attribution_text
+            if clear_quarantine:
+                db_doc.quarantine_reason = None
+            elif quarantine_reason is not None:
                 db_doc.quarantine_reason = quarantine_reason
             if third_party_permission_status is not None:
                 tp_val = third_party_permission_status.value if hasattr(third_party_permission_status, "value") else str(third_party_permission_status)

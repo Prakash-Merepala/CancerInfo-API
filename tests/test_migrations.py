@@ -632,29 +632,59 @@ def test_model_to_migration_drift_check(test_db_url, alembic_cfg):
 
 def test_legacy_long_revision_identifier_remapped_transparently(test_db_url, alembic_cfg):
     """
-    Test 13: Transparent remapping of legacy 38-character revision identifier.
+    Test 13: Transparent remapping of legacy revision identifier.
     Accounts explicitly for any disposable SQLite or dev databases stamped with
     '0002_document_rights_and_consensus_linkage'.
-    Verifies that get_current_revision, verify_database_schema_at_head, and alembic upgrade
-    normalize it to '0002_document_rights' without error.
+    Models the actual supported legacy database scenario (disposable SQLite) without
+    weakening the normal PostgreSQL schema (maintaining VARCHAR(32)).
+    Verifies that get_current_revision and verify_database_schema_at_head remain strictly read-only,
+    and repair_legacy_revision is an explicit, guarded, verified operation.
     """
+    from app.database.migration_check import repair_legacy_revision
+
     engine = create_engine(test_db_url)
     command.upgrade(alembic_cfg, "head")
 
-    # Forcefully stamp alembic_version with the old 38-char identifier
-    with engine.connect() as conn:
-        conn.execute(text("UPDATE alembic_version SET version_num = '0002_document_rights_and_consensus_linkage'"))
-        conn.commit()
+    if engine.dialect.name == "sqlite":
+        # 1. Model the actual supported legacy scenario: disposable SQLite database
+        # stamped with the old 43-character identifier from commit a8f5039
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = '0002_document_rights_and_consensus_linkage'"))
+            conn.commit()
 
-    # Verify get_current_revision transparently remaps to '0002_document_rights'
-    current_rev = get_current_revision(engine)
-    assert current_rev == "0002_document_rights"
+        # 2. Verify get_current_revision is strictly read-only: reports raw legacy revision, no side-effect mutation
+        raw_rev = get_current_revision(engine)
+        assert raw_rev == "0002_document_rights_and_consensus_linkage"
 
-    # Verify verify_database_schema_at_head succeeds
-    head_rev = verify_database_schema_at_head(engine)
-    assert head_rev == "0002_document_rights"
+        # 3. Verify startup schema check fails fast and read-only on legacy revision
+        with pytest.raises(RuntimeError) as exc_info:
+            verify_database_schema_at_head(engine)
+        assert "legacy revision" in str(exc_info.value)
+        # Database remains unmutated
+        assert get_current_revision(engine) == "0002_document_rights_and_consensus_linkage"
 
-    # Re-run upgrade head to verify Alembic commands succeed seamlessly
-    command.upgrade(alembic_cfg, "head")
-    assert get_current_revision(engine) == "0002_document_rights"
+        # 4. Explicit guarded repair
+        repaired = repair_legacy_revision(engine)
+        assert repaired == "0002_document_rights"
+
+        # 5. Verify persistence and read-only checks pass
+        assert get_current_revision(engine) == "0002_document_rights"
+        assert verify_database_schema_at_head(engine) == "0002_document_rights"
+
+        # 6. Subsequent migration commands succeed seamlessly
+        command.upgrade(alembic_cfg, "head")
+        assert get_current_revision(engine) == "0002_document_rights"
+    else:
+        # In PostgreSQL: verify normal schema is NOT weakened (version_num length is <= 32)
+        inspector = inspect(engine)
+        cols = {c["name"]: c for c in inspector.get_columns("alembic_version")}
+        assert "version_num" in cols
+        col_type = cols["version_num"]["type"]
+        assert getattr(col_type, "length", 32) <= 32
+
+        # Verify PostgreSQL database is cleanly at head and repair is a safe no-op
+        assert get_current_revision(engine) == "0002_document_rights"
+        assert repair_legacy_revision(engine) is None
+        assert verify_database_schema_at_head(engine) == "0002_document_rights"
+
     engine.dispose()

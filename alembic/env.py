@@ -63,20 +63,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    # Explicitly remap disposable SQLite/dev databases stamped with legacy long revision
-    try:
-        from sqlalchemy import inspect as sa_inspect, text as sa_text
-        with connectable.connect() as probe_conn:
-            if "alembic_version" in sa_inspect(probe_conn).get_table_names():
-                probe_conn.execute(
-                    sa_text(
-                        "UPDATE alembic_version SET version_num = '0002_document_rights' "
-                        "WHERE version_num = '0002_document_rights_and_consensus_linkage'"
-                    )
-                )
-                probe_conn.commit()
-    except Exception:
-        pass
+    # Explicit, guarded operation to repair legacy revision identifiers in dev/disposable databases
+    from app.database.migration_check import repair_legacy_revision
+    repair_legacy_revision(connectable)
 
     with connectable.connect() as connection:
 

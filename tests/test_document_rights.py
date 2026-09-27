@@ -254,8 +254,12 @@ def test_missing_required_evidence_prevents_eligible_decision():
     doc.rights_evidence_url = "https://example.gov/policy"
     doc.rights_reviewed_at = datetime.utcnow()
     doc.rights_reviewer = "Reviewer Name"
+    doc.permissible_use = "U.S. Federal Government public domain"
     doc.redistribution_allowed = True
     doc.commercial_redistribution_allowed = True
+    doc.full_text_storage_allowed = True
+    doc.derived_summary_allowed = True
+    doc.attribution_required = False
     doc.quarantine_reason = "Pending third-party media clearance"
     assert doc.is_publication_eligible() is False
 
@@ -484,8 +488,12 @@ def test_third_party_permission_state_distinguishes_not_requested_from_submitted
         rights_evidence_url="https://example.org/rights",
         rights_reviewed_at=datetime.utcnow(),
         rights_reviewer="Auditor",
+        permissible_use="WHO Open Access Policy",
         redistribution_allowed=True,
         commercial_redistribution_allowed=True,
+        full_text_storage_allowed=True,
+        derived_summary_allowed=True,
+        attribution_required=False,
         third_party_permission_status=ThirdPartyPermissionStatus.REQUIRED_NOT_SUBMITTED.value,
     )
     is_eligible, reasons = evaluate_publication_eligibility(doc)
@@ -498,9 +506,16 @@ def test_third_party_permission_state_distinguishes_not_requested_from_submitted
     assert is_eligible is False
     assert any("REQUESTED_AWAITING_RESPONSE" in r for r in reasons)
 
-    # Change to GRANTED and clear publication status to ELIGIBLE -> now eligible
+    # Change to GRANTED without supporting notes -> not eligible (requires supporting evidence)
     doc.third_party_permission_status = ThirdPartyPermissionStatus.GRANTED.value
     doc.publication_status = PublicationStatus.ELIGIBLE.value
+    doc.third_party_permission_notes = None
+    is_eligible, reasons = evaluate_publication_eligibility(doc)
+    assert is_eligible is False
+    assert any("third-party permission is GRANTED but supporting evidence" in r for r in reasons)
+
+    # Supply supporting evidence reference -> now eligible
+    doc.third_party_permission_notes = "WHO Permission Committee written waiver ref #WHO-2026-001"
     is_eligible, reasons = evaluate_publication_eligibility(doc)
     assert is_eligible is True
 
@@ -536,7 +551,8 @@ def test_owner_review_workflow_truthful_recording(test_db_session):
 
 def test_consolidated_publication_eligibility_rejects_unknown_missing_and_inconsistent():
     """
-    Issue 3: Proves publication eligibility rejects unknown or missing third-party decisions
+    Issue 3 & 4: Proves publication eligibility rejects unknown or missing third-party decisions,
+    missing permissible-use evidence, missing storage/derivative/attribution decisions,
     and inconsistent evidence fail-closed.
     """
     doc = SourceDocument(
@@ -550,8 +566,12 @@ def test_consolidated_publication_eligibility_rejects_unknown_missing_and_incons
         rights_evidence_url="https://example.gov/rights",
         rights_reviewed_at=datetime.utcnow(),
         rights_reviewer="Reviewer",
+        permissible_use="U.S. Federal Government work in public domain",
         redistribution_allowed=True,
         commercial_redistribution_allowed=True,
+        full_text_storage_allowed=True,
+        derived_summary_allowed=True,
+        attribution_required=False,
         third_party_permission_status=ThirdPartyPermissionStatus.NOT_APPLICABLE.value,
     )
     # Valid baseline
@@ -585,11 +605,44 @@ def test_consolidated_publication_eligibility_rejects_unknown_missing_and_incons
     assert doc.is_publication_eligible() is False
     doc.rights_evidence_url = "https://example.gov/rights"
 
-    # 6. Inconsistent attribution
+    # 6. Missing permissible_use evidence
+    doc.permissible_use = ""
+    assert doc.is_publication_eligible() is False
+    doc.permissible_use = None
+    assert doc.is_publication_eligible() is False
+    doc.permissible_use = "U.S. Federal Government public domain"
+    assert doc.is_publication_eligible() is True
+
+    # 7. Explicit storage decision required
+    doc.full_text_storage_allowed = None
+    assert doc.is_publication_eligible() is False
+    doc.full_text_storage_allowed = False
+    assert doc.is_publication_eligible() is False
+    doc.full_text_storage_allowed = True
+    assert doc.is_publication_eligible() is True
+
+    # 8. Explicit derivative summary decision required
+    doc.derived_summary_allowed = None
+    assert doc.is_publication_eligible() is False
+    doc.derived_summary_allowed = False
+    assert doc.is_publication_eligible() is False
+    doc.derived_summary_allowed = True
+    assert doc.is_publication_eligible() is True
+
+    # 9. Explicit attribution decision and consistency
+    doc.attribution_required = None
+    assert doc.is_publication_eligible() is False
     doc.attribution_required = True
     doc.attribution_text = ""
     assert doc.is_publication_eligible() is False
     doc.attribution_text = "Source: NCI"
+    assert doc.is_publication_eligible() is True
+
+    # 10. Supporting evidence for GRANTED third-party permission
+    doc.third_party_permission_status = "GRANTED"
+    doc.third_party_permission_notes = None
+    assert doc.is_publication_eligible() is False
+    doc.third_party_permission_notes = "License agreement #2026-NCI"
     assert doc.is_publication_eligible() is True
 
 
@@ -785,4 +838,288 @@ def test_populated_l003_database_upgrade_and_transition(tmp_path):
     assert repeat_result["citations_linked"] == 0
     assert repeat_result["citations_already_linked"] == 1
     engine.dispose()
+
+
+def test_populated_transition_preserves_owner_reviews_and_permission_references(tmp_path):
+    """
+    Issue 3: Populated transition must preserve existing owner reviews, evidence,
+    attribution, and permission references across restarts and repeated executions.
+    """
+    from alembic import command
+    from app.database.migration_check import get_alembic_config
+    from app.database.transition import transition_populated_l003_database
+
+    db_path = tmp_path / "preserve_reviews.db"
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url)
+    cfg = get_alembic_config()
+    cfg.set_main_option("sqlalchemy.url", db_url)
+
+    command.upgrade(cfg, "head")
+
+    # Initial transition
+    res1 = transition_populated_l003_database(engine, dry_run=False)
+    assert res1["status"] == "SUCCESS"
+
+    # Now record an owner review with specific reviewer, timestamp, and permission reference
+    review_dt = datetime(2026, 9, 27, 12, 0, 0)
+    with sessionmaker(bind=engine)() as s:
+        record_owner_rights_review(
+            url="https://www.cancer.gov/types/breast",
+            reviewer="Jaya Prakash Merepala",
+            reviewed_at=review_dt,
+            publication_status=PublicationStatus.ELIGIBLE,
+            rights_evidence_url="https://www.cancer.gov/policies/custom-evidence",
+            permissible_use="U.S. Federal Government text verified clear",
+            commercial_redistribution_allowed=True,
+            redistribution_allowed=True,
+            quarantine_reason=None,
+            third_party_permission_status=ThirdPartyPermissionStatus.NOT_APPLICABLE,
+            permission_reference="AUDIT-TICKET-2026-NCI",
+            db=s,
+            commit=True,
+        )
+
+    # Re-run transition (simulating process restart and repeat run)
+    res2 = transition_populated_l003_database(engine, dry_run=False)
+    assert res2["status"] == "SUCCESS"
+
+    # Verify that the owner review fields were NOT overwritten by RIGHTS_INVENTORY unreviewed defaults
+    with sessionmaker(bind=engine)() as s:
+        doc = s.query(SourceDocument).filter_by(original_url="https://www.cancer.gov/types/breast").one()
+        assert doc.rights_reviewer == "Jaya Prakash Merepala"
+        assert doc.rights_reviewed_at == review_dt
+        assert doc.publication_status == "ELIGIBLE"
+        assert doc.rights_evidence_url == "https://www.cancer.gov/policies/custom-evidence"
+        assert doc.permissible_use == "U.S. Federal Government text verified clear"
+        assert "AUDIT-TICKET-2026-NCI" in (doc.third_party_permission_notes or "")
+
+    engine.dispose()
+
+
+def test_transition_fails_and_rolls_back_on_unresolved_links(tmp_path):
+    """
+    Issue 3: Verify citation linkage postconditions before commit;
+    do not report SUCCESS with unresolved links. Roll back atomically on failure.
+    """
+    from alembic import command
+    from app.database.migration_check import get_alembic_config
+    from app.database.transition import TransitionError, transition_populated_l003_database
+
+    db_path = tmp_path / "rollback_unresolved.db"
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url)
+    cfg = get_alembic_config()
+    cfg.set_main_option("sqlalchemy.url", db_url)
+
+    command.upgrade(cfg, "head")
+
+    # Populate Source and Cancer
+    with sessionmaker(bind=engine)() as s:
+        src = Source(
+            id="src-test",
+            organization_name="Test Org",
+            source_name="Test",
+            base_url="https://example.org",
+            country_code="US",
+            source_type="government",
+            trust_tier="Tier 1",
+            authority_type="GOVERNMENT",
+            license_type="Public Domain",
+            license_status="APPROVED",
+        )
+        s.add(src)
+        cancer = Cancer(id="cancer-test", canonical_name="Test Cancer", slug="test-cancer")
+        s.add(cancer)
+        fact = ConsensusFact(
+            id="fact-orphan-1",
+            cancer_id="cancer-test",
+            category="symptoms",
+            fact_key="orphan_key",
+            title="Orphan Fact",
+            clinical_detail="Clinical detail",
+            active=True,
+        )
+        s.add(fact)
+        # Add consensus citation pointing to an unknown source_url not in candidate SourceDocuments
+        orphan_cfs = ConsensusFactSource(
+            id="cfs-orphan-1",
+            consensus_fact_id="fact-orphan-1",
+            source_id="src-test",
+            country_code="US",
+            quote_snippet="Unlinked quote snippet",
+            attribution_text="Unlinked attribution",
+            source_url="https://completely-unmatched-external-source.org/fact",
+        )
+        s.add(orphan_cfs)
+        s.commit()
+
+    # Attempt transition: must fail postcondition because orphan_cfs cannot be linked
+    with pytest.raises(TransitionError) as exc_info:
+        transition_populated_l003_database(engine, dry_run=False)
+
+    assert "postcondition failed" in str(exc_info.value).lower()
+    assert "remain unlinked" in str(exc_info.value).lower()
+
+    # Verify session was rolled back and no candidate docs were committed
+    with sessionmaker(bind=engine)() as s:
+        orphan_check = s.query(ConsensusFactSource).filter_by(id="cfs-orphan-1").one()
+        assert orphan_check.source_document_id is None
+
+    engine.dispose()
+
+
+def test_transition_enforces_supported_schema_revision(tmp_path):
+    """
+    Issue 3: Transition must strictly enforce the supported schema revision (0002_document_rights).
+    Fails fast if database is at 0001_initial_schema or unmigrated.
+    """
+    from alembic import command
+    from app.database.migration_check import get_alembic_config
+    from app.database.transition import TransitionError, inspect_transition_readiness, transition_populated_l003_database
+
+    db_path = tmp_path / "schema_check.db"
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url)
+    cfg = get_alembic_config()
+    cfg.set_main_option("sqlalchemy.url", db_url)
+
+    # 1. At 0001_initial_schema (outdated revision)
+    command.upgrade(cfg, "0001_initial_schema")
+
+    with pytest.raises(TransitionError) as exc_info:
+        inspect_transition_readiness(engine)
+    assert "not at supported head revision" in str(exc_info.value)
+
+    with pytest.raises(TransitionError) as exc_info:
+        transition_populated_l003_database(engine, dry_run=False)
+    assert "not at supported head revision" in str(exc_info.value)
+
+    engine.dispose()
+
+
+def test_acceptance_evaluation_rejects_inconsistent_eligible_and_single_record(test_db_session):
+    """
+    Issue 5: Correct acceptance evaluation so unresolved candidate decisions and
+    inconsistent ELIGIBLE records cannot silently pass. Separate explicitly excluded documents
+    from unresolved candidates, and require an owner-approved eligible corpus rather than merely one record.
+    """
+    # 1. Baseline unreviewed audit
+    report = audit_candidate_acceptance(db=test_db_session)
+    assert report["l004_acceptance_satisfied"] is False
+    assert len(report["unresolved_candidate_decisions"]) == 28
+    assert len(report["unresolved_permission_decisions"]) == 4
+    assert len(report["owner_approved_eligible_corpus"]) == 0
+
+    # 2. Inconsistent ELIGIBLE record (marked ELIGIBLE but missing required review fields)
+    doc = test_db_session.query(SourceDocument).filter_by(
+        original_url="https://www.cancer.gov/types/breast"
+    ).one()
+    doc.publication_status = "ELIGIBLE"
+    # Do not set rights_reviewed_at or rights_reviewer -> inconsistent!
+    test_db_session.flush()
+
+    report_inconsistent = audit_candidate_acceptance(db=test_db_session)
+    assert "https://www.cancer.gov/types/breast" in report_inconsistent["inconsistent_eligible_records"]
+    assert report_inconsistent["l004_acceptance_satisfied"] is False
+    assert any("inconsistent" in b.lower() or "fail publication eligibility" in b.lower() for b in report_inconsistent["blockers"])
+
+    # 3. Single valid eligible document does NOT satisfy corpus acceptance
+    record_owner_rights_review(
+        url="https://www.cancer.gov/types/breast",
+        reviewer="Jaya Prakash Merepala",
+        reviewed_at=datetime.utcnow(),
+        publication_status=PublicationStatus.ELIGIBLE,
+        rights_evidence_url="https://www.cancer.gov/policies/copyright-reuse",
+        permissible_use="U.S. Public Domain",
+        commercial_redistribution_allowed=True,
+        redistribution_allowed=True,
+        quarantine_reason=None,
+        third_party_permission_status=ThirdPartyPermissionStatus.NOT_APPLICABLE,
+        db=test_db_session,
+        commit=True,
+    )
+    # Set full storage/derivative decisions
+    doc.full_text_storage_allowed = True
+    doc.derived_summary_allowed = True
+    doc.attribution_required = False
+    test_db_session.commit()
+
+    report_single = audit_candidate_acceptance(db=test_db_session)
+    assert len(report_single["owner_approved_eligible_corpus"]) == 1
+    assert report_single["l004_acceptance_satisfied"] is False
+    assert any("not merely a single isolated record" in b for b in report_single["blockers"])
+
+
+def test_populated_postgresql_transition():
+    """
+    Issue 6: Focused regression coverage for populated transition on PostgreSQL.
+    Runs whenever POSTGRES_TEST_URL is provided (as in GitHub Actions CI).
+    """
+    import os
+    if not os.getenv("POSTGRES_TEST_URL"):
+        pytest.skip("POSTGRES_TEST_URL not set; skipping live PostgreSQL transition test")
+
+    from tests.db_support import disposable_postgres
+    from alembic import command
+    from app.database.migration_check import get_alembic_config, set_alembic_url_safe
+    from app.database.transition import transition_populated_l003_database
+
+    with disposable_postgres(os.environ["POSTGRES_TEST_URL"]) as pg_url:
+        pg_engine = create_engine(pg_url)
+        cfg = get_alembic_config()
+        set_alembic_url_safe(cfg, pg_url)
+
+        # 1. Upgrade to L003 schema
+        command.upgrade(cfg, "0001_initial_schema")
+
+        # 2. Populate L003 data via raw SQL
+        with pg_engine.connect() as conn:
+            conn.execute(text(
+                "INSERT INTO sources (id, organization_name, source_name, base_url, country_code, "
+                "source_type, trust_tier, authority_type, license_type, license_status, active) "
+                "VALUES ('nci-us', 'National Cancer Institute', 'NCI', 'https://www.cancer.gov', 'US', 'government', "
+                "'Tier 1', 'GOVERNMENT', 'Public Domain', 'APPROVED', true)"
+            ))
+            conn.execute(text(
+                "INSERT INTO cancers (id, canonical_name, slug) VALUES ('cancer-breast', 'Breast Cancer', 'breast-cancer')"
+            ))
+            conn.execute(text(
+                "INSERT INTO source_documents (id, source_id, original_url, title, language, country_code, "
+                "jurisdiction_scope, content_hash, processing_status, canonical_cancer_id) "
+                "VALUES ('doc-pg-1', 'nci-us', 'https://www.cancer.gov/types/breast', "
+                "'Breast Cancer', 'en', 'US', 'COUNTRY', 'sha-hash-1', 'PROCESSED', 'cancer-breast')"
+            ))
+            conn.execute(text(
+                "INSERT INTO consensus_facts (id, cancer_id, category, fact_key, title, clinical_detail, active) "
+                "VALUES ('fact-pg-1', 'cancer-breast', 'symptoms', 'breast_lump', 'Lump', 'Clinical detail', true)"
+            ))
+            conn.execute(text(
+                "INSERT INTO consensus_fact_sources (id, consensus_fact_id, source_id, country_code, "
+                "quote_snippet, attribution_text, source_url) "
+                "VALUES ('cfs-pg-1', 'fact-pg-1', 'nci-us', 'US', "
+                "'Lump in breast.', 'Attribution note.', 'https://www.cancer.gov/types/breast')"
+            ))
+            conn.commit()
+
+        # 3. Upgrade to L004 head
+        command.upgrade(cfg, "head")
+
+        # 4. Dry-run transition on PostgreSQL
+        dry_res = transition_populated_l003_database(pg_engine, dry_run=True)
+        assert dry_res["status"] == "VALIDATED_NO_MUTATION"
+        assert dry_res["mode"] == "DRY_RUN"
+
+        # 5. Apply transition on PostgreSQL
+        apply_res = transition_populated_l003_database(pg_engine, dry_run=False)
+        assert apply_res["status"] == "SUCCESS"
+        assert apply_res["mode"] == "APPLY"
+        assert apply_res["citations_linked"] == 1
+
+        # 6. Verify repeat-safe idempotency on PostgreSQL
+        repeat_res = transition_populated_l003_database(pg_engine, dry_run=False)
+        assert repeat_res["status"] == "SUCCESS"
+        assert repeat_res["citations_linked"] == 0
+
+        pg_engine.dispose()
 

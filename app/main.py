@@ -7,13 +7,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.constants import MEDICAL_DISCLAIMER
-from app.core.errors import APIError, api_error_handler, generic_exception_handler
+from app.core.errors import (APIError, api_error_handler, generic_exception_handler,
+                             validation_error_handler, http_error_handler)
 from app.core.security import rate_limiter
 from app.database.session import Base, SessionLocal, engine
 from app.ingestion.seed import seed_database
+from app.schemas.common import ErrorResponse
 
 
 @asynccontextmanager
@@ -42,6 +46,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
+    responses={code: {"model": ErrorResponse} for code in (400, 401, 404, 405, 409, 422, 429, 500)},
 )
 
 # CORS Configuration
@@ -67,6 +72,8 @@ app.add_middleware(
 # Exception Handlers
 app.add_exception_handler(APIError, api_error_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(HTTPException, http_error_handler)
 
 
 @app.middleware("http")
@@ -375,4 +382,3 @@ curl -s http://localhost:3000/v1/coverage | jq</code></pre>
 </html>
 """
     return HTMLResponse(content=html_content)
-

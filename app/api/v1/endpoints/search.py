@@ -1,13 +1,15 @@
 """
 Search Endpoint (Section 22)
 """
+import math
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.repositories.search_repo import SearchRepository
 from app.schemas.cancer import CancerSummaryOut
-from app.schemas.common import MetaInfo, StandardResponse
+from app.schemas.common import MetaInfo, StandardResponse, PaginationMeta
+from app.normalization.taxonomy import resolve_public_category
 from app.schemas.content import (
     ConsensusItemOut,
     ContentRecordOut,
@@ -27,6 +29,7 @@ def search(
     country: Optional[str] = Query(None, description="Country filter, e.g. 'US', 'GB', 'AU', 'GLOBAL'"),
     source: Optional[str] = Query(None, description="Source ID filter, e.g. 'nci-us', 'who-global'"),
     audience: Optional[str] = Query(None, description="Audience filter, e.g. 'patient'"),
+    page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
@@ -34,6 +37,12 @@ def search(
     Search across canonical cancer names, aliases, and fact-level content records.
     Understands canonical names, abbreviations, and common names.
     """
+    if not q.strip():
+        from app.core.errors import APIError
+        raise APIError("VALIDATION_ERROR", "Search query must contain non-whitespace text.", 422)
+    category = resolve_public_category(category) if category is not None else None
+    country = country.strip().upper() if country else None
+    audience = audience.strip().lower() if audience else None
     repo = SearchRepository(db)
     raw_results = repo.search(
         query_str=q,
@@ -41,8 +50,10 @@ def search(
         country=country,
         source_id=source,
         audience=audience,
-        limit=limit,
+        limit=None,
     )
+    total = len(raw_results)
+    raw_results = raw_results[(page - 1) * limit:page * limit]
 
     items = []
     for r in raw_results:
@@ -58,6 +69,13 @@ def search(
         consensus_item_out = None
         if r.get("consensus_item"):
             cf = r["consensus_item"]
+            links = [cs for cs in cf.corroborating_sources if not source or cs.source_id == source]
+            preferred = [cs for cs in links if (cs.country_code or cs.source.country_code) in (country, "GLOBAL")]
+            if country and preferred:
+                links = preferred
+            links = sorted(links, key=lambda cs: (
+                (cs.country_code or cs.source.country_code) != country, cs.source_id, cs.source_url
+            ))
             corrob_sources = [
                 CorroboratingSourceOut(
                     source_id=cs.source.id,
@@ -69,7 +87,7 @@ def search(
                     quote=cs.quote_snippet,
                     attribution_text=cs.attribution_text or cs.source.attribution_text,
                 )
-                for cs in cf.corroborating_sources
+                for cs in links
             ]
             consensus_item_out = ConsensusItemOut(
                 id=cf.id,
@@ -145,4 +163,7 @@ def search(
     return StandardResponse(
         data=payload,
         meta=MetaInfo(result_count=len(items)),
+        pagination=PaginationMeta(page=page, limit=limit, total_records=total,
+                                  total_pages=math.ceil(total / limit),
+                                  has_next=page * limit < total, has_prev=page > 1),
     )

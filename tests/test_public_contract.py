@@ -1,9 +1,37 @@
 """L010 contract regressions using synthetic, disposable evidence."""
 import math
+import os
 import pytest
 from app.models import Cancer, CancerAlias, ContentRecord, ContentSource, ConsensusFact, ConsensusFactSource
 from app.main import app
 from app.core.errors import generic_exception_handler
+
+
+@pytest.fixture(params=["sqlite"] + (["postgresql"] if os.environ.get("POSTGRES_TEST_URL") else []))
+def db_session(request):
+    """Run the public contract against the actual migrated PostgreSQL schema."""
+    if request.param == "sqlite":
+        from conftest import TestingSessionLocal
+        with TestingSessionLocal() as db:
+            yield db
+        return
+    from alembic import command
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from db_support import disposable_postgres
+    from app.database.migration_check import get_alembic_config, set_alembic_url_safe
+    from app.ingestion.seed import seed_database
+    with disposable_postgres(os.environ["POSTGRES_TEST_URL"]) as url:
+        engine = create_engine(url)
+        try:
+            cfg = get_alembic_config()
+            set_alembic_url_safe(cfg, url)
+            command.upgrade(cfg, "head")
+            with Session(engine) as db:
+                seed_database(db)
+                yield db
+        finally:
+            engine.dispose()
 
 
 @pytest.fixture
